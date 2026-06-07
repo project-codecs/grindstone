@@ -1,0 +1,20 @@
+<idea-plugin>
+    <id>com.codex.idea.Grindstone</id>
+    <name>Grindstone</name>
+
+    <vendor url="https://github.com/project-codecs">Project Codex</vendor>
+
+    <description><![CDATA[
+        IDEA plugin made for easier development of multi-versioned Minecraft mods with Stonecutter.
+        Grindstone lets you create a multi-versioned project directly with no setup, and lets you get
+        into development faster instead of having to mess with build scripts and configs forever.
+    ]]></description>
+
+    <depends>com.intellij.modules.compose</depends>
+    <depends>com.intellij.java</depends>
+    <depends>com.intellij.modules.json</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <newProjectWizard.generator implementation="com.codex.idea.grindstone.wizard.GrindstoneWizard"/>
+    </extensions>
+</idea-plugin>
