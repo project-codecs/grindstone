@@ -44,7 +44,6 @@ class McVersionPickerPanel(private val onSelectionChanged: (List<String>) -> Uni
 
     fun setVersions(versions: List<McGameVersion>) {
         allVersions = versions
-        versions.filter { it.stable }.take(2).forEach { selected.add(it.version) }
         rebuildGrid()
         onSelectionChanged(selected.toList())
     }

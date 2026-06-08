@@ -5,20 +5,20 @@ import com.codex.idea.grindstone.generator.model.DependencyVersionSpec
 import com.codex.idea.grindstone.utility.versions.MavenVersions
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.observable.properties.PropertyGraph
+import com.intellij.openapi.observable.util.not
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
-import com.intellij.openapi.observable.util.not
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.AlignX
-import com.intellij.ui.dsl.builder.bind
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.AsyncProcessIcon
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Dimension
 import javax.swing.*
 import javax.swing.table.AbstractTableModel
@@ -27,21 +27,28 @@ import javax.swing.table.TableCellEditor
 class DependencyDialog(private val mcVersions: List<String>, private val existingEntry: DependencyEntry? = null) : DialogWrapper(true) {
     private val graph = PropertyGraph()
 
-    private val isSingleModeProperty = graph.property(existingEntry?.versionSpec !is DependencyVersionSpec.PerVersion)
+    private val isSingleModeProperty = graph.property(existingEntry?.versionSpec !is DependencyVersionSpec.Multi)
 
     private val modIdField = JTextField(existingEntry?.modId ?: "", 30)
     private val addToFmjCheckbox = JBCheckBox("Add to fabric.mod.json depends", existingEntry?.addToFabricModJson ?: true)
     private val coordinateField = JTextField(existingEntry?.mavenCoordinate ?: "", 40)
     private val repoUrlField = JTextField(existingEntry?.mavenRepo ?: "https://maven.fabricmc.net/", 40)
 
-    private val singleVersionCombo  = ComboBox<String>()
+    private val singleVersionCombo = ComboBox<String>()
     private val fetchButton = JButton("Fetch versions")
     private val fetchingIcon = AsyncProcessIcon("DependencyDialogFetch")
     private val fetchStatusLabel = JBLabel("").also { it.foreground = JBColor.RED }
 
+    private val singleVersionPanel = JPanel(CardLayout())
+    private val multiVersionPanel = JPanel(CardLayout())
+
     private lateinit var perVersionTableModel: PerVersionTableModel
     private lateinit var perVersionTable: JTable
-    private val perVersionPanel = JPanel(BorderLayout())
+
+    companion object {
+        private const val CARD_SINGLE = "single"
+        private const val CARD_MULTI = "perVersion"
+    }
 
     private var availableVersions: List<String> = emptyList()
 
@@ -57,11 +64,17 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
             else -> { /* per-version handled with the table */ }
         }
 
-        isSingleModeProperty.afterChange { updateSwingEnabledState() }
         fetchButton.addActionListener { fetchVersions() }
-        addToFmjCheckbox.addActionListener { modIdField.isEnabled = addToFmjCheckbox.isSelected }
+        addToFmjCheckbox.addActionListener { initValidation() }
 
-        modIdField.isEnabled = addToFmjCheckbox.isSelected
+        listOf(coordinateField, repoUrlField, modIdField).forEach { field ->
+            field.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+                override fun insertUpdate(e: javax.swing.event.DocumentEvent) = initValidation()
+                override fun removeUpdate(e: javax.swing.event.DocumentEvent) = initValidation()
+                override fun changedUpdate(e: javax.swing.event.DocumentEvent) = initValidation()
+            })
+        }
+
         fetchingIcon.isVisible = false
     }
 
@@ -72,7 +85,29 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
             rowHeight = 28
             preferredScrollableViewportSize = Dimension(500, mcVersions.size.coerceAtMost(8) * rowHeight)
         }
-        perVersionPanel.add(JBScrollPane(perVersionTable), BorderLayout.CENTER)
+
+        val singleCard = JPanel(BorderLayout(4, 0)).apply {
+            add(singleVersionCombo, BorderLayout.CENTER)
+            val right = JPanel().apply {
+                add(fetchButton)
+                add(fetchingIcon)
+                add(fetchStatusLabel)
+            }
+            add(right, BorderLayout.EAST)
+        }
+
+        val perVersionCard = JPanel(BorderLayout(0, 4)).apply {
+            add(JBScrollPane(perVersionTable), BorderLayout.CENTER)
+            val bottom = JPanel().apply {
+                add(JButton("Fetch Versions For All").also { btn ->
+                    btn.addActionListener { fetchVersions() }
+                })
+            }
+            add(bottom, BorderLayout.SOUTH)
+        }
+
+        singleVersionPanel.add(singleCard, CARD_SINGLE)
+        multiVersionPanel.add(perVersionCard, CARD_MULTI)
 
         return panel {
             group("Mod Metadata") {
@@ -87,50 +122,47 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
                         .comment("e.g. https://maven.fabricmc.net/")
                 }
                 row { cell(addToFmjCheckbox) }
-                row("Mod ID (fabric.mod.json):") {
+                row("Mod ID (fabric.mod.json, gradle.properties):") {
                     cell(modIdField).align(AlignX.FILL)
-                        .comment("The id used in the depends block, e.g. fabric-api")
+                        .comment("The id used in the depends block and in properties files, e.g. fabric-api")
                 }
             }
 
             group("Version") {
                 buttonsGroup {
                     row {
-                        radioButton("Single version for all sub-versions", value = true)
-                        radioButton("Separate version per Minecraft version", value = false)
+                        radioButton("Single version for all sub-versions")
+                            .applyToComponent {
+                                isSelected = isSingleModeProperty.get()
+                                addActionListener { isSingleModeProperty.set(true) }
+                            }
+
+                        radioButton("Separate version per Minecraft version")
+                            .applyToComponent {
+                                isSelected = !isSingleModeProperty.get()
+                                addActionListener { isSingleModeProperty.set(false) }
+                            }
                     }
-                }.bind(getter = { isSingleModeProperty.get() }, setter = { isSingleModeProperty.set(it) })
-
-                row("Version:") {
-                    cell(singleVersionCombo).align(AlignX.FILL)
-                    cell(fetchButton)
-                    cell(fetchingIcon)
-                    cell(fetchStatusLabel)
-                }.visibleIf(isSingleModeProperty)
+                }
 
                 row {
-                    cell(perVersionPanel).align(AlignX.FILL)
-                        .comment("Select a version for each Minecraft sub-version. Fetch versions first.")
-                }.visibleIf(isSingleModeProperty.not())
+                    cell(singleCard)
+                        .visibleIf(isSingleModeProperty)
+                        .align(AlignX.FILL)
 
-                row {
-                    button("Fetch Versions For All") { fetchVersions() }
-                        .comment("Downloads available versions from the Maven repo above")
-                }.visibleIf(isSingleModeProperty.not())
+                    cell(perVersionCard)
+                        .visibleIf(isSingleModeProperty.not())
+                        .align(AlignX.FILL)
+                }
             }
         }.also {
             it.preferredSize = Dimension(620, -1)
         }
     }
 
-    private fun updateSwingEnabledState() {
-        val singleMode = isSingleModeProperty.get()
-
-        singleVersionCombo.isEnabled = singleMode
-        perVersionTable.isEnabled = !singleMode
-    }
-
-    private fun buildInitialPerVersionMap(): Map<String, String> = (existingEntry?.versionSpec as? DependencyVersionSpec.PerVersion)?.versions ?: mcVersions.associateWith { "" }
+    private fun buildInitialPerVersionMap(): Map<String, String> =
+        (existingEntry?.versionSpec as? DependencyVersionSpec.Multi)?.versions
+            ?: mcVersions.associateWith { "" }
 
     private fun fetchVersions() {
         val coordinate = coordinateField.text.trim()
@@ -168,6 +200,8 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
                 if (currentSingle != null && versions.contains(currentSingle)) singleVersionCombo.selectedItem = currentSingle
 
                 perVersionTableModel.setAvailableVersions(versions)
+
+                initValidation()
             }
         }
     }
@@ -181,15 +215,19 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
         if (repo.isEmpty()) return ValidationInfo("Maven repository URL is required", repoUrlField)
         if (!repo.startsWith("http")) return ValidationInfo("Repo URL must start with http(s)://", repoUrlField)
 
-        if (addToFmjCheckbox.isSelected && modIdField.text.isBlank()) return ValidationInfo("Mod ID is required when adding to fabric.mod.json", modIdField)
-        if (isSingleModeProperty.get() && singleVersionCombo.selectedItem == null) return ValidationInfo("Select or fetch a version", singleVersionCombo)
+        if (modIdField.text.isBlank())
+            return ValidationInfo("Mod ID is required", modIdField)
+
+        if (isSingleModeProperty.get() && singleVersionCombo.selectedItem == null)
+            return ValidationInfo("Select or fetch a version", singleVersionCombo)
 
         return null
     }
 
     fun getResult(): DependencyEntry {
-        val versionSpec: DependencyVersionSpec = if (isSingleModeProperty.get()) DependencyVersionSpec.Single(singleVersionCombo.selectedItem as String)
-                                                 else DependencyVersionSpec.PerVersion(perVersionTableModel.getVersionMap())
+        val versionSpec: DependencyVersionSpec =
+            if (isSingleModeProperty.get()) DependencyVersionSpec.Single(singleVersionCombo.selectedItem as String)
+            else DependencyVersionSpec.Multi(perVersionTableModel.getVersionMap())
 
         return DependencyEntry(
             modId = modIdField.text.trim(),
@@ -203,7 +241,6 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
 
 private class PerVersionTableModel(private val mcVersions: List<String>, initialMap: Map<String, String>) : AbstractTableModel() {
     private val selected = LinkedHashMap<String, String>().apply { mcVersions.forEach { put(it, initialMap[it] ?: "") } }
-
     private var availableVersions: List<String> = emptyList()
 
     fun setAvailableVersions(versions: List<String>) {
@@ -212,7 +249,6 @@ private class PerVersionTableModel(private val mcVersions: List<String>, initial
     }
 
     fun getVersionMap(): Map<String, String> = LinkedHashMap(selected)
-
     fun getAvailableVersions(): List<String> = availableVersions
 
     override fun getRowCount() = mcVersions.size
@@ -228,7 +264,6 @@ private class PerVersionTableModel(private val mcVersions: List<String>, initial
 
     override fun setValueAt(value: Any?, row: Int, column: Int) {
         if (column != 1) return
-
         selected[mcVersions[row]] = value?.toString().orEmpty()
         fireTableCellUpdated(row, column)
     }
@@ -237,9 +272,7 @@ private class PerVersionTableModel(private val mcVersions: List<String>, initial
 private class VersionComboEditor : AbstractCellEditor(), TableCellEditor {
     private val combo = ComboBox<String>()
 
-    override fun getTableCellEditorComponent(
-        table: JTable, value: Any?, isSelected: Boolean, row: Int, column: Int
-    ): java.awt.Component {
+    override fun getTableCellEditorComponent(table: JTable, value: Any?, isSelected: Boolean, row: Int, column: Int): java.awt.Component {
         val model = table.model as? PerVersionTableModel
         combo.removeAllItems()
         combo.addItem("")

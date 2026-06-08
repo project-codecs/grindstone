@@ -1,12 +1,18 @@
 package com.codex.idea.grindstone.wizard.step
 
+import com.codex.idea.grindstone.generator.GrindstoneProjectGenerator
 import com.codex.idea.grindstone.generator.model.DependencyEntry
 import com.codex.idea.grindstone.utility.License
-import com.codex.idea.grindstone.utility.WizardUtils.findStep
 import com.codex.idea.grindstone.utility.toPackageName
+import com.codex.idea.grindstone.utility.versions.LoaderVersions
+import com.codex.idea.grindstone.utility.versions.MavenVersions
 import com.codex.idea.grindstone.utility.versions.McVersion
 import com.codex.idea.grindstone.utility.versions.MinecraftVersions
+import com.codex.idea.grindstone.utility.versions.SemVer
 import com.codex.idea.grindstone.wizard.component.DependencyListDialog
+import com.codex.idea.grindstone.wizard.component.MappingsConfig
+import com.codex.idea.grindstone.wizard.component.MappingsDialog
+import com.codex.idea.grindstone.wizard.component.MappingsType
 import com.codex.idea.grindstone.wizard.panel.McVersionPickerPanel
 import com.intellij.ide.wizard.AbstractNewProjectWizardStep
 import com.intellij.ide.wizard.NewProjectWizardBaseData
@@ -17,12 +23,12 @@ import com.intellij.openapi.observable.util.bindStorage
 import com.intellij.openapi.observable.util.not
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.validation.CHECK_NON_EMPTY
-import com.intellij.openapi.ui.validation.WHEN_GRAPH_PROPAGATION_FINISHED
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBSlider
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.COLUMNS_LARGE
-import com.intellij.ui.dsl.builder.COLUMNS_MEDIUM
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindSelected
@@ -30,8 +36,12 @@ import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.columns
 import com.intellij.ui.dsl.builder.textValidation
 import com.intellij.util.ui.AsyncProcessIcon
+import com.sun.management.OperatingSystemMXBean
 import kotlinx.serialization.Serializable
+import java.lang.management.ManagementFactory
+import java.util.Hashtable
 import javax.swing.DefaultComboBoxModel
+import javax.swing.JLabel
 import javax.swing.SwingUtilities
 
 enum class AWType(val label: String) {
@@ -41,7 +51,15 @@ enum class AWType(val label: String) {
 }
 
 @Serializable
-data class McGameVersion (
+data class McGameVersion(
+    val version: String,
+    val stable: Boolean,
+)
+
+data class FabricLoaderVersion(
+    val separator: String,
+    val build: Int,
+    val maven: String,
     val version: String,
     val stable: Boolean
 )
@@ -50,14 +68,37 @@ data class McGameVersion (
 data class GrindstoneConfig(
     val selectedVersions: List<String>,
     val vcsVersion: String,
+
+    val modId: String,
+    val modName: String,
+    val mainClass: String,
+
+    val groupId: String,
+    val artifactId: String,
+    val version: String,
+    val maxMemoryUsage: Int,
+
+    val loomVersion: String,
     val fabricLoaderVersion: String,
+    val fabricApiVersion: String,
+
+    val mappingsType: String,
+    val yarnVersions: Map<String, String>,
+
     val modDependencies: List<DependencyEntry>,
     val devDependencies: List<DependencyEntry>,
-    val fabricApiVersion: String,
+
     val accessWidenerType: AWType,
+
     val useMixins: Boolean,
+    val useDatagen: Boolean,
+    val useSeparatePackges: Boolean,
+
     val generateVersionedResources: Boolean,
     val generatePublishing: Boolean,
+    val generateTests: Boolean,
+    val useArtifactCollection: Boolean,
+    val useGithubBuildNumber: Boolean
 )
 
 class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardStep(parent) {
@@ -72,8 +113,12 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     val vcsVersionProperty: GraphProperty<String> = propertyGraph.property("")
     var vcsVersion by vcsVersionProperty
 
-    val loomVersionProperty: GraphProperty<String> = propertyGraph.property("1.16-SNAPSHOT")
-    val loaderVersionProperty: GraphProperty<String> = propertyGraph.property("0.16.9")
+    private val loomVersionModel = DefaultComboBoxModel<String>()
+    private val loaderVersionModel = DefaultComboBoxModel<String>()
+
+    val loomVersionProperty: GraphProperty<String> = propertyGraph.property("")
+    val loaderVersionProperty: GraphProperty<String> = propertyGraph.property("")
+
     val fabricApiVersionProperty: GraphProperty<String> = propertyGraph.property("")
 
     val awTypeProperty: GraphProperty<AWType> = propertyGraph.property(AWType.SPREAD)
@@ -81,33 +126,30 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     val useMixinsProperty = propertyGraph.property(false)
     val useDatagenProperty = propertyGraph.property(false)
     val generateVersionedResourcesProperty = propertyGraph.property(false)
+    val generateTestsProperty = propertyGraph.property(false)
+    val useSeparatePackagesProperty = propertyGraph.property(false)
     val generatePublishingProperty = propertyGraph.property(false)
+    val artifactCollectionProperty = propertyGraph.property(true)
+    val githubBuildNumberProperty = propertyGraph.property(false)
+
     val modIdProperty = propertyGraph.property("")
     val modNameProperty = propertyGraph.property("")
     val mainClassProperty = propertyGraph.lazyProperty(::suggestMainClassName)
-    val licenseProperty = propertyGraph.property(License.ALL_RIGHTS_RESERVED.id)
 
     val groupIdProperty = propertyGraph.property("org.example").bindStorage("${javaClass.name}.groupId")
     val artifactIdProperty = propertyGraph.lazyProperty(modNameProperty::get)
     val versionProperty = propertyGraph.property("1.0-SNAPSHOT").bindStorage("${javaClass.name}.version")
-
-    var groupId by groupIdProperty
-    var artifactId by artifactIdProperty
-    var version by versionProperty
-
-    val descriptionProperty = propertyGraph.property("")
-    val authorsProperty = propertyGraph.property("")
-    val websiteProperty = propertyGraph.property("")
-
-    val description by descriptionProperty
-    val authors by authorsProperty
-    val website by websiteProperty
 
     val modDependenciesProperty: GraphProperty<List<DependencyEntry>> = propertyGraph.property(emptyList())
     var modDependencies by modDependenciesProperty
 
     val devDependenciesProperty: GraphProperty<List<DependencyEntry>> = propertyGraph.property(emptyList())
     var devDependencies by devDependenciesProperty
+
+    val mappingsConfigProperty: GraphProperty<MappingsConfig> = propertyGraph.property(MappingsConfig(MappingsType.OFFICIAL))
+    var mappingsConfig by mappingsConfigProperty
+
+    val maxMemoryProperty = propertyGraph.property(2048)
 
     private lateinit var versionPicker: McVersionPickerPanel
     private val controllerComboModel = DefaultComboBoxModel<String>()
@@ -120,7 +162,19 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
             if (vcsVersion !in sorted) vcsVersion = sorted.firstOrNull() ?: ""
         }
 
+        modIdProperty.dependsOn(modNameProperty) {
+            modNameProperty.get()
+                .lowercase()
+                .replace(Regex("[^a-z0-9]+"), "_")
+                .trim('_')
+        }
+
         artifactIdProperty.dependsOn(baseData.nameProperty, ::suggestArtifactId)
+        mainClassProperty.dependsOn(modIdProperty, ::suggestMainClassName)
+        mainClassProperty.dependsOn(groupIdProperty, ::suggestMainClassName)
+        mainClassProperty.dependsOn(useSeparatePackagesProperty, ::suggestMainClassName)
+
+        modNameProperty.dependsOn(baseData.nameProperty, baseData.nameProperty::get)
     }
 
     override fun setupUI(builder: Panel) {
@@ -134,29 +188,43 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                 .apply { component.foreground = JBColor.RED }
         }.visibleIf(noVersionsProperty)
 
-        builder.row("Minecraft versions") {
-            versionPicker = McVersionPickerPanel { newSelection ->
-                selectedVersions = newSelection
+        builder.collapsibleGroup("Minecraft Versions") {
+            row("Versions: ") {
+                versionPicker = McVersionPickerPanel { selectedVersions = it; mappingsConfigProperty.set(mappingsConfigProperty.get()) }
+                cell(versionPicker).align(AlignX.FILL)
             }
-            cell(versionPicker).align(AlignX.FILL)
+
+            row("VCS version: ") {
+                comboBox(controllerComboModel)
+                    .bindItem(vcsVersionProperty)
+            }
         }.visibleIf(versionsLoadingProperty.not())
 
-        builder.row("Active/VCS version") {
-            comboBox(controllerComboModel)
-                .bindItem(vcsVersionProperty)
-            comment("The version Stonecutter treats as the VCS version and the current active project root")
-        }.visibleIf(versionsLoadingProperty.not())
+        builder.collapsibleGroup("Project") {
+            row("Mod name: ") {
+                textField()
+                    .bindText(modNameProperty)
+                    .columns(COLUMNS_LARGE)
+            }
 
-        builder.row("Mod ID:") {
-            textField()
-                .bindText(modIdProperty)
-                .columns(COLUMNS_MEDIUM)
-                .validationRequestor(WHEN_GRAPH_PROPAGATION_FINISHED(propertyGraph))
-                .textValidation(CHECK_NON_EMPTY)
+            row("Mod ID: ") {
+                textField()
+                    .bindText(modIdProperty)
+                    .columns(COLUMNS_LARGE)
+                    .textValidation(CHECK_NON_EMPTY)
+            }
+
+            row("Main class: ") {
+                textField()
+                    .bindText(mainClassProperty)
+                    .columns(COLUMNS_LARGE)
+            }
         }
 
-        builder.collapsibleGroup("Dependencies") {
-            row("Fabric loader") { textField().bindText(loaderVersionProperty) }
+        builder.collapsibleGroup("Toolchain and Dependencies") {
+            row("Loom version: ") { comboBox(loomVersionModel).bindItem(loomVersionProperty).enabledIf(versionsLoadingProperty.not()) }
+            row("Fabric loader: ") { comboBox(loaderVersionModel).bindItem(loaderVersionProperty).enabledIf(versionsLoadingProperty.not()) }
+
             row("Mod dependencies") {
                 button("Configure") {
                     val dialog = DependencyListDialog(
@@ -164,17 +232,10 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                         mcVersions = selectedVersions,
                         initial = modDependencies,
                     )
-                    if (dialog.showAndGet()) {
-                        modDependencies = dialog.getResult()
-                    }
-                }
-
-                label("").also { label ->
-                    modDependenciesProperty.afterChange { list ->
-                        label.component.text = if (list.isEmpty()) "" else "${list.size} configured"
-                    }
+                    if (dialog.showAndGet()) modDependencies = dialog.getResult()
                 }
             }
+
             row("Dev dependencies") {
                 button("Configure") {
                     val dialog = DependencyListDialog(
@@ -182,103 +243,193 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                         mcVersions = selectedVersions,
                         initial = devDependencies,
                     )
+                    if (dialog.showAndGet()) devDependencies = dialog.getResult()
+                }
+            }
+
+            row {
+                val summaryLabel = label(mappingsLabel()).component
+                mappingsConfigProperty.afterChange { summaryLabel.text = mappingsLabel() }
+
+                button("Configure") {
+                    val dialog = MappingsDialog(
+                        mcVersions = selectedVersions,
+                        initial = mappingsConfig
+                    )
+
                     if (dialog.showAndGet()) {
-                        devDependencies = dialog.getResult()
+                        mappingsConfig = dialog.getResult()
+                        loadVersions()
                     }
-                }
-                label("").also { label ->
-                    devDependenciesProperty.afterChange { list ->
-                        label.component.text = if (list.isEmpty()) "" else "${list.size} configured"
-                    }
+                    summaryLabel.text = mappingsLabel()
                 }
             }
         }
 
-        builder.collapsibleGroup("Optional Settings") {
-            row("Description:") {
-                textField()
-                    .columns(COLUMNS_LARGE)
-                    .bindText(descriptionProperty)
+        builder.collapsibleGroup("Features") {
+            row("Access Widener") {
+                comboBox(AWType.entries.toList())
+                    .bindItem(awTypeProperty)
+                    .applyToComponent {
+                        renderer = SimpleListCellRenderer.create("") { it.label }
+                    }
             }
 
-            row("Authors:") {
-                textField()
-                    .columns(COLUMNS_LARGE)
-                    .bindText(authorsProperty)
+            row {
+                checkBox("Use mixins").bindSelected(useMixinsProperty)
+                checkBox("Use datagen").bindSelected(useDatagenProperty)
+                checkBox("Use publishing (Modrinth)").bindSelected(generatePublishingProperty)
             }
 
-            row("Website:") {
-                textField()
-                    .columns(COLUMNS_LARGE)
-                    .bindText(websiteProperty)
+            row {
+                checkBox("Separate resources")
+                    .bindSelected(generateVersionedResourcesProperty)
+                    .comment("Generate separate src/main/resources folders for all versions.")
+            }
+
+            row {
+                checkBox("Generate test config")
+                    .bindSelected(generateTestsProperty)
+                    .comment("Generate src/tests and add junit configuration to build files.")
+            }
+
+            row {
+                checkBox("Use separate packages")
+                    .bindSelected(useSeparatePackagesProperty)
+                    .comment("Put all initialization entrypoints into different packages like common and common.data.")
+            }
+
+            row {
+                checkBox("Use artifact collection")
+                    .bindSelected(artifactCollectionProperty)
+                    .comment("Add a gradle task 'buildAndCollect' which builds all versions and collects the jar files in /artifacts.")
+            }
+
+            row {
+                checkBox("Use GitHub build num in version")
+                    .bindSelected(githubBuildNumberProperty)
+                    .comment("Add -\$buildNum to the archive java file.")
             }
         }
 
-        builder.collapsibleGroup("Build System Properties") {
-            row("Group ID:") {
-                textField()
-                    .columns(COLUMNS_LARGE)
-                    .bindText(groupIdProperty)
+        builder.collapsibleGroup("Build System") {
+            row("Group ID: ") {
+                textField().bindText(groupIdProperty)
             }
 
-            row("Artifact ID:") {
-                textField()
-                    .columns(COLUMNS_LARGE)
-                    .bindText(artifactIdProperty)
+            row("Artifact ID: ") {
+                textField().bindText(artifactIdProperty)
             }
 
-            row("Version:") {
-                textField()
-                    .columns(COLUMNS_LARGE)
-                    .bindText(versionProperty)
+            row("Version: ") {
+                textField().bindText(versionProperty)
+            }
+
+            row("Maximum RAM usage: ") {
+                val min = 1024
+                val max = getMaxRecommendedRamMb()
+
+                val slider = JBSlider(JBSlider.HORIZONTAL, min, max, 2048).apply {
+                    paintTicks = true
+                    paintLabels = true
+                    snapToTicks = true
+
+                    majorTickSpacing = 1024
+                    minorTickSpacing = 256
+
+                    // Show tick labels as GB
+                    val labels = Hashtable<Int, JLabel>()
+                    for (value in min..max step majorTickSpacing) {
+                        labels[value] = JLabel("${value / 1024}G")
+                    }
+                    labelTable = labels
+                }
+
+                val valueLabel = JBLabel("${slider.value} MB").apply {
+                    val size = JBLabel("XXXXXXXX").preferredSize
+                    minimumSize = size
+                    preferredSize = size
+                    maximumSize = size
+                }
+
+                slider.addChangeListener {
+                    val valueMb = slider.value
+
+                    valueLabel.text = "$valueMb MB"
+                    maxMemoryProperty.set(valueMb)
+                }
+
+                cell(valueLabel)
+                cell(slider)
+                    .resizableColumn()
+                    .align(AlignX.FILL)
             }
         }
-
-//        builder.group("Features") {
-//            row("Access Widener") {
-//                comboBox(AWType.entries.toList())
-//                    .bindItem(awTypeProperty)
-//                    .applyToComponent { renderer = SimpleListCellRenderer.create("") { it.label ?: "" } }
-//            }
-//
-//            row {
-//                checkBox("Mixins").bindSelected(useMixinsProperty)
-//            }
-//            row {
-//                checkBox("Versioned resource packs")
-//                    .bindSelected(generateVersionedResourcesProperty)
-//                    .comment("Separate resources/ dirs for each version")
-//            }
-//            row {
-//                checkBox("Modrinth / CurseForge publishing")
-//                    .bindSelected(generatePublishingProperty)
-//                    .comment("Uses modmuss50's mod-publish-plugin for files and minotaur for the description")
-//            }
-//        }
 
         loadVersions()
     }
 
+    private fun mappingsLabel(): String {
+        val cfg = mappingsConfig
+        return "Mappings: " + when (cfg.type) {
+            MappingsType.OFFICIAL -> "Official (Mojmaps)"
+            MappingsType.YARN -> {
+                val filled = cfg.yarnVersions.values.count { it.isNotBlank() }
+                val total = selectedVersions.size
+                if (filled == total && total > 0) "Yarn ($filled/${total} configured)"
+                else if (total == 0) "Yarn (no MC versions selected)"
+                else "Yarn ($filled/${total} configured, open to complete)"
+            }
+        }
+    }
+
+    fun getMaxRecommendedRamMb(): Int {
+        val osBean = ManagementFactory.getOperatingSystemMXBean() as OperatingSystemMXBean
+
+        val totalBytes = osBean.totalMemorySize
+
+        val oneGbBytes = 1024L * 1024L * 1024L
+        val usable = (totalBytes - oneGbBytes).coerceAtLeast(512L * 1024 * 1024)
+
+        return 12288.coerceAtMost((usable / (1024 * 1024)).toInt())
+    }
+
     private fun loadVersions() {
         ApplicationManager.getApplication().executeOnPooledThread {
-            val versions = MinecraftVersions.downloadData()
+            val mcVersions = MinecraftVersions.downloadData(mappingsConfig.type == MappingsType.YARN)
+            val loaderVersions = LoaderVersions.downloadData()
+            val loomVersions: List<String> = MavenVersions.fetchVersions("https://maven.fabricmc.net/", "net.fabricmc", "fabric-loom").sortedByDescending { SemVer.parse(it) }
+
             SwingUtilities.invokeLater {
                 versionsLoadingProperty.set(false)
-                if (versions.isEmpty()) {
+
+                loaderVersionModel.removeAllElements()
+                loaderVersions.forEach { loaderVersionModel.addElement(it.version) }
+
+                if (loaderVersionProperty.get().isBlank()) {
+                    loaderVersionProperty.set(loaderVersions.firstOrNull()?.version ?: "")
+                }
+
+                loomVersionModel.removeAllElements()
+                loomVersions.forEach { loomVersionModel.addElement(it) }
+
+                if (loomVersionProperty.get().isBlank()) {
+                    loomVersionProperty.set(loomVersions.firstOrNull() ?: "")
+                }
+
+                if (mcVersions.isEmpty()) {
                     noVersionsProperty.set(true)
                     return@invokeLater
                 }
-                versionPicker.setVersions(versions)
+
+                versionPicker.setVersions(mcVersions)
             }
         }
     }
 
     private fun suggestMainClassName(): String {
-        val step = findStep<GrindstoneStep>()
-
-        if (step.artifactId.contains('.')) return step.mainClassProperty.get()
-
-        return step.groupId.toPackageName()
+        if (artifactIdProperty.get().contains('.')) return mainClassProperty.get()
+        return "${groupIdProperty.get().toPackageName()}.${modIdProperty.get()}${if (useSeparatePackagesProperty.get()) ".common." else "."}${modNameProperty.get()}"
     }
 
     private fun suggestArtifactId(): String {
@@ -292,22 +443,42 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     }
 
     override fun setupProject(project: Project) {
+        val cfg = mappingsConfig
         val config = GrindstoneConfig(
             selectedVersions = selectedVersions,
             vcsVersion = vcsVersion,
+
+            modId = modIdProperty.get(),
+            modName = modNameProperty.get(),
+            mainClass = modNameProperty.get(),
+
+            groupId = groupIdProperty.get(),
+            artifactId = artifactIdProperty.get(),
+            version = versionProperty.get(),
+            maxMemoryUsage = maxMemoryProperty.get(),
+
+            loomVersion = loomVersionProperty.get(),
             fabricLoaderVersion = loaderVersionProperty.get(),
+            fabricApiVersion = fabricApiVersionProperty.get(),
+
+            mappingsType = cfg.type.name.lowercase(),
+            yarnVersions = cfg.yarnVersions,
+
             modDependencies = modDependencies,
             devDependencies = devDependencies,
-            fabricApiVersion = fabricApiVersionProperty.get(),
+
             accessWidenerType = awTypeProperty.get(),
             useMixins = useMixinsProperty.get(),
+            useDatagen = useDatagenProperty.get(),
+            useSeparatePackges = useSeparatePackagesProperty.get(),
+
             generateVersionedResources = generateVersionedResourcesProperty.get(),
             generatePublishing = generatePublishingProperty.get(),
+            generateTests = generateTestsProperty.get(),
+            useArtifactCollection = artifactCollectionProperty.get(),
+            useGithubBuildNumber = githubBuildNumberProperty.get()
         )
-        //  StonecutterProjectGenerator(project, context, config).generate()
-    }
 
-    private fun kotlinx.coroutines.CoroutineScope.cancel() {
-        this.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        GrindstoneProjectGenerator(project, context, config).generate()
     }
 }

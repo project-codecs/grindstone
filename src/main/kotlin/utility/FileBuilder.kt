@@ -1,30 +1,31 @@
 package com.codex.idea.grindstone.utility
 
-import java.nio.file.Files
-import java.nio.file.Path
-import java.security.InvalidParameterException
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.vfs.VirtualFile
+import java.nio.charset.StandardCharsets
 
-@Suppress("unused")
-class FileBuilder(path: Path) {
-    val builder: StringBuilder
+class FileBuilder(private val file: VirtualFile) {
+    private val builder = StringBuilder()
 
-    init {
-        if (Files.isDirectory(path)) throw InvalidParameterException("FileBuilder cannot point to a directory! Must pass a file path.")
-        if (!Files.exists(path.parent)) Files.createDirectories(path)
-
-        builder = StringBuilder()
+    fun append(text: String, line: Boolean = true): FileBuilder = apply {
+        if (line) builder.appendLine(text) else builder.append(text)
     }
 
-    fun append(what: String): FileBuilder {
-        builder.append(what)
-        return this
-    }
-
-    fun blank(lines: Int = 1): FileBuilder {
-        for (i in 0 until lines) {
-            builder.append("\n")
+    fun append(text: String, line: Boolean = true, should: () -> Boolean): FileBuilder = apply {
+        if (should()) {
+            if (line) builder.appendLine(text) else builder.append(text)
         }
+    }
 
-        return this
+    fun blank(lines: Int = 1): FileBuilder = apply {
+        repeat(lines) { builder.appendLine() }
+    }
+
+    fun blank(lines: Int = 1, should: () -> Boolean): FileBuilder = apply {
+        if (should()) repeat(lines) { builder.appendLine() }
+    }
+
+    fun write() {
+        ApplicationManager.getApplication().runWriteAction { file.setBinaryContent(builder.toString().toByteArray(StandardCharsets.UTF_8)) }
     }
 }

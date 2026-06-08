@@ -71,7 +71,7 @@ private class DependencyListCellRenderer : DefaultListCellRenderer() {
                     is DependencyVersionSpec.Single ->
                         append(" [${spec.version}]")
 
-                    is DependencyVersionSpec.PerVersion ->
+                    is DependencyVersionSpec.Multi ->
                         append(" [per-version: ${spec.versions.size} entries]")
                 }
 

@@ -8,21 +8,29 @@ sealed class DependencyVersionSpec {
     data class Single(val version: String) : DependencyVersionSpec()
 
     @Serializable
-    data class PerVersion(val versions: Map<String, String>) : DependencyVersionSpec() // mc -> dep
+    data class Multi(val versions: Map<String, String>) : DependencyVersionSpec() // mc -> dep
 }
 
-data class DependencyEntry(
-    val modId: String,
-    val addToFabricModJson: Boolean,
-    val mavenCoordinate: String,
-    val mavenRepo: String,
-    val versionSpec: DependencyVersionSpec
-) {
-    fun implementationPath(mcVersion: String): String {
-        val v = when(versionSpec) {
+data class DependencyEntry(val modId: String, val addToFabricModJson: Boolean, val mavenCoordinate: String, val mavenRepo: String, val versionSpec: DependencyVersionSpec) {
+    fun versionFor(mcVersion: String): String {
+        return when(versionSpec) {
             is DependencyVersionSpec.Single -> versionSpec.version
-            is DependencyVersionSpec.PerVersion -> versionSpec.versions[mcVersion] ?: ""
+            is DependencyVersionSpec.Multi -> versionSpec.versions[mcVersion] ?: ""
         }
-        return "$mavenCoordinate:$v"
+    }
+
+    fun version(): String {
+        return when (versionSpec) {
+            is DependencyVersionSpec.Single -> versionSpec.version
+            is DependencyVersionSpec.Multi -> error("Trying to set global version property for a dependency that is per-versioned! Don't do that!")
+        }
+    }
+
+    fun isSingle(): Boolean {
+        return versionSpec is DependencyVersionSpec.Single
+    }
+
+    fun isMulti(): Boolean {
+        return versionSpec is DependencyVersionSpec.Multi
     }
 }

@@ -1,5 +1,9 @@
 package com.codex.idea.grindstone.utility
 
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
+import java.io.File
 import java.util.Locale
 
 /**
@@ -24,5 +28,15 @@ fun String.toPackageName(): String {
 
     return if (packageName.isEmpty()) { "_" } else {
         packageName.lowercase(Locale.ROOT)
+    }
+}
+
+fun Project.baseDirectory(): VirtualFile? {
+    return basePath?.let { path -> VfsUtil.findFileByIoFile(File(path), true) }
+}
+
+fun VirtualFile.createDirs(relativePath: String): VirtualFile {
+    return relativePath.split('/').fold(this) { parent, segment ->
+        parent.findChild(segment) ?: parent.createChildDirectory(this, segment)
     }
 }
