@@ -1,4 +1,4 @@
-package com.codex.idea.grindstone.wizard;
+package com.codex.idea.grindstone.wizard
 
 import com.codex.idea.grindstone.wizard.step.GrindstoneStep
 import com.intellij.ide.util.projectWizard.WizardContext

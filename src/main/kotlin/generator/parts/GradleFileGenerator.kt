@@ -26,8 +26,8 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
             .blank()
             .append("deps.fabric_loader=${config.fabricLoaderVersion}")
 
-        if (appendDependencyProps(builder, config.modDependencies.filter { entry -> entry.versionSpec is DependencyVersionSpec.Single }, ""  )) builder.blank()
-        if (appendDependencyProps(builder, config.devDependencies.filter { entry -> entry.versionSpec is DependencyVersionSpec.Single }, "r.")) builder.blank()
+        if (appendDependencyProps(builder, config.modDependencies.filter(DependencyEntry::isSingle), ""  )) builder.blank()
+        if (appendDependencyProps(builder, config.devDependencies.filter(DependencyEntry::isSingle), "r.")) builder.blank()
 
         builder
             .append("publish.modrinth=CHANGE_ME")

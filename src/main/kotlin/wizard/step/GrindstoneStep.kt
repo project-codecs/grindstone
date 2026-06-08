@@ -2,7 +2,6 @@ package com.codex.idea.grindstone.wizard.step
 
 import com.codex.idea.grindstone.generator.GrindstoneProjectGenerator
 import com.codex.idea.grindstone.generator.model.DependencyEntry
-import com.codex.idea.grindstone.utility.License
 import com.codex.idea.grindstone.utility.toPackageName
 import com.codex.idea.grindstone.utility.versions.LoaderVersions
 import com.codex.idea.grindstone.utility.versions.MavenVersions
