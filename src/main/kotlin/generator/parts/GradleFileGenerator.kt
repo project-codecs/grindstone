@@ -155,14 +155,14 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
             .append("""    testRuntimeOnly("org.junit.platform:junit-platform-launcher")""") { config.generateTests }
             .blank() { config.generateTests }
 
-        generateDependencies(builder, config.modDependencies, "modImplementation(", "")
+        generateDependencies(builder, config.modDependencies, "modImplementation(", "", false)
 
         if (config.devDependencies.isNotEmpty()) {
             builder
                 .append("    sc.constants[\"release\"]?.let {")
                 .append("        if (!it) {")
 
-            generateDependencies(builder, config.devDependencies, "modLocalRuntime(", "        ")
+            generateDependencies(builder, config.devDependencies, "modLocalRuntime(", "        ", true)
 
             builder
                 .append("        }")
@@ -340,8 +340,8 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
         return b.toString()
     }
 
-    private fun generateDependencies(builder: FileBuilder, deps: List<DependencyEntry>, prefix: String, indent: String) {
-        for (dep in deps) builder.append("$indent    $prefix\"", false).append("${dep.mavenCoordinate}:\${property(\"deps.${dep.modId}\")}\")")
+    private fun generateDependencies(builder: FileBuilder, deps: List<DependencyEntry>, prefix: String, indent: String, dev: Boolean) {
+        for (dep in deps) builder.append("$indent    $prefix\"", false).append("${dep.mavenCoordinate}:\${property(\"${if (dev) "r." else ""}deps.${dep.modId}\")}\")")
     }
 
     private fun appendDependencyProps(builder: FileBuilder, deps: List<DependencyEntry>, prefix: String = ""): Boolean {

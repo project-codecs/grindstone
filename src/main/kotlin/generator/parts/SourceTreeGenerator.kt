@@ -57,8 +57,8 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
         mainResources.createChildData(this, "fabric.mod.json")
             .setBinaryContent(fabricModJson(
                 mainPackagePath.replace('/', '.') + config.mainClass,
-                clientPackagePath.replace('/', '.') + config.mainClass + "Client",
-                dataPackagePath.replace('/', '.') + config.mainClass + "DataGenerator"
+                "${clientPackagePath.replace('/', '.')}.${config.mainClass}Client",
+                "${dataPackagePath.replace('/', '.')}.${config.mainClass}DataGenerator"
             ).toByteArray())
 
         if (config.useMixins) mainResources.createChildData(this, "${config.modId}.mixins.json")
