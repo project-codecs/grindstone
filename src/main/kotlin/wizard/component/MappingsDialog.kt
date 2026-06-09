@@ -1,5 +1,6 @@
 package com.codex.idea.grindstone.wizard.component
 
+import com.codex.idea.grindstone.utility.translate
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.observable.properties.PropertyGraph
 import com.intellij.openapi.observable.util.not
@@ -59,7 +60,7 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
     }
 
     init {
-        title = "Configure Mappings"
+        title = translate("mappings.configure")
         init()
 
         fetchingIcon.isVisible = false
@@ -78,7 +79,7 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
 
         val officialCard = JPanel(BorderLayout()).apply {
             add(
-                JBLabel("<html>Mojang's official mappings will be used.<br>No extra configuration required.</html>"),
+                JBLabel(translate("mappings.official.description")),
                 BorderLayout.NORTH
             )
         }
@@ -87,12 +88,12 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
             add(JBScrollPane(yarnTable), BorderLayout.CENTER)
 
             val buttonRow = JPanel().apply {
-                add(JButton("Fetch & Auto-detect").also { btn ->
-                    btn.toolTipText = "Fetch Yarn versions from Fabric meta and pick the newest build per MC version"
+                add(JButton(translate("mappings.fetchAutoDetect")).also { btn ->
+                    btn.toolTipText = translate("mappings.fetchAutoDetect.tooltip")
                     btn.addActionListener { fetchAndAutoDetect() }
                 })
-                add(JButton("Reset").also { btn ->
-                    btn.toolTipText = "Clear all selected Yarn versions"
+                add(JButton(translate("mappings.reset")).also { btn ->
+                    btn.toolTipText = translate("mappings.reset.tooltip")
                     btn.addActionListener { yarnTableModel.resetAll() }
                 })
                 add(fetchingIcon)
@@ -105,10 +106,10 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
         yarnPanel.add(yarnCard, CARD_YARN)
 
         return panel {
-            group("Mappings Type") {
+            group(translate("mappings.type")) {
                 buttonsGroup {
                     row {
-                        radioButton("Official (Mojmaps)")
+                        radioButton(translate("mappings.official"))
                             .applyToComponent {
                                 isSelected = isOfficialProperty.get()
 
@@ -116,9 +117,9 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
                                     isOfficialProperty.set(true)
                                 }
                             }
-                            .comment("Mojang's official mappings")
+                            .comment(translate("mappings.official.comment"))
 
-                        radioButton("Yarn")
+                        radioButton(translate("mappings.yarn.label"))
                             .applyToComponent {
                                 isSelected = !isOfficialProperty.get()
 
@@ -126,12 +127,12 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
                                     isOfficialProperty.set(false)
                                 }
                             }
-                            .comment("Community-maintained mappings from FabricMC")
+                            .comment(translate("mappings.yarn.comment"))
                     }
                 }
             }
 
-            group("Configuration") {
+            group(translate("mappings.configuration")) {
                 row {
                     cell(officialPanel)
                         .visibleIf(isOfficialProperty)
@@ -175,7 +176,7 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
                 yarnTableModel.applyAutoDetected(results)
 
                 if (anyFailed) {
-                    statusLabel.text = "Some versions could not be fetched"
+                    statusLabel.text = translate("mappings.error.fetchSome")
                 } else {
                     statusLabel.text = ""
                 }
@@ -191,7 +192,7 @@ class MappingsDialog(private val mcVersions: List<String>, private val initial: 
             val missing = mcVersions.filter { yarnTableModel.getVersionFor(it).isBlank() }
             if (missing.isNotEmpty()) {
                 return ValidationInfo(
-                    "Missing Yarn version for: ${missing.joinToString(", ")}. Use Fetch & Auto-detect or choose manually.",
+                    translate("mappings.error.missingFor", params = arrayOf(missing.joinToString(", "))),
                     null
                 )
             }
@@ -242,7 +243,7 @@ private class YarnVersionTableModel(private val mcVersions: List<String>, initia
 
     override fun getRowCount() = mcVersions.size
     override fun getColumnCount() = 2
-    override fun getColumnName(col: Int) = if (col == 0) "Minecraft Version" else "Yarn Build"
+    override fun getColumnName(col: Int) = if (col == 0) translate("mcVersion") else translate("mappings.yarn.version")
     override fun getColumnClass(col: Int) = String::class.java
     override fun isCellEditable(row: Int, col: Int) = col == 1
 

@@ -3,6 +3,7 @@ package com.codex.idea.grindstone.wizard.step
 import com.codex.idea.grindstone.generator.GrindstoneProjectGenerator
 import com.codex.idea.grindstone.generator.model.DependencyEntry
 import com.codex.idea.grindstone.utility.toPackageName
+import com.codex.idea.grindstone.utility.translate
 import com.codex.idea.grindstone.utility.versions.LoaderVersions
 import com.codex.idea.grindstone.utility.versions.MavenVersions
 import com.codex.idea.grindstone.utility.versions.McVersion
@@ -12,7 +13,7 @@ import com.codex.idea.grindstone.wizard.component.DependencyListDialog
 import com.codex.idea.grindstone.wizard.component.MappingsConfig
 import com.codex.idea.grindstone.wizard.component.MappingsDialog
 import com.codex.idea.grindstone.wizard.component.MappingsType
-import com.codex.idea.grindstone.wizard.panel.McVersionPickerPanel
+import com.codex.idea.grindstone.wizard.component.McVersionPickerPanel
 import com.intellij.ide.wizard.AbstractNewProjectWizardStep
 import com.intellij.ide.wizard.NewProjectWizardBaseData
 import com.intellij.ide.wizard.NewProjectWizardStep
@@ -44,9 +45,9 @@ import javax.swing.JLabel
 import javax.swing.SwingUtilities
 
 enum class AWType(val label: String) {
-    SINGLE("One shared file in src/main/resources"),
-    SPREAD("Separate access widener files for all versions"),
-    NONE("None");
+    SINGLE(translate("awType.single")),
+    SPREAD(translate("awType.spread")),
+    NONE(translate("none"));
 }
 
 @Serializable
@@ -101,7 +102,7 @@ data class GrindstoneConfig(
 )
 
 class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardStep(parent) {
-    private val baseData = data.getUserData(NewProjectWizardBaseData.KEY) ?: error("Step created without base data")
+    private val baseData = data.getUserData(NewProjectWizardBaseData.KEY) ?: error(translate("error.noData"))
 
     private val versionsLoadingProperty = propertyGraph.property(true)
     private val noVersionsProperty = propertyGraph.property(false)
@@ -179,55 +180,55 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     override fun setupUI(builder: Panel) {
         builder.row {
             cell(AsyncProcessIcon("StonecutterStep versions load"))
-            label("Fetching Minecraft versions…")
+            label(translate("loading.mcVersions"))
         }.visibleIf(versionsLoadingProperty)
 
         builder.row {
-            label("Could not load version list. Check your internet connection.")
+            label(translate("error.couldNotLoadVersions"))
                 .apply { component.foreground = JBColor.RED }
         }.visibleIf(noVersionsProperty)
 
-        builder.collapsibleGroup("Minecraft Versions") {
-            row("Versions: ") {
+        builder.collapsibleGroup(translate("property.mcVersions")) {
+            row(translate("property.mcVersions.versions", after = 1)) {
                 versionPicker = McVersionPickerPanel { selectedVersions = it; mappingsConfigProperty.set(mappingsConfigProperty.get()) }
                 cell(versionPicker).align(AlignX.FILL)
             }
 
-            row("VCS version: ") {
+            row(translate("property.mcVersions.vcsVersion", after = 1)) {
                 comboBox(controllerComboModel)
                     .bindItem(vcsVersionProperty)
             }
         }.visibleIf(versionsLoadingProperty.not())
 
-        builder.collapsibleGroup("Project") {
-            row("Mod name: ") {
+        builder.collapsibleGroup(translate("property.project")) {
+            row(translate("property.project.modName", after = 1)) {
                 textField()
                     .bindText(modNameProperty)
                     .columns(COLUMNS_LARGE)
             }
 
-            row("Mod ID: ") {
+            row(translate("property.project.modId", after = 1)) {
                 textField()
                     .bindText(modIdProperty)
                     .columns(COLUMNS_LARGE)
                     .textValidation(CHECK_NON_EMPTY)
             }
 
-            row("Main class: ") {
+            row(translate("property.project.mainClass", after = 1)) {
                 textField()
                     .bindText(mainClassProperty)
                     .columns(COLUMNS_LARGE)
             }
         }
 
-        builder.collapsibleGroup("Toolchain and Dependencies") {
-            row("Loom version: ") { comboBox(loomVersionModel).bindItem(loomVersionProperty).enabledIf(versionsLoadingProperty.not()) }
-            row("Fabric loader: ") { comboBox(loaderVersionModel).bindItem(loaderVersionProperty).enabledIf(versionsLoadingProperty.not()) }
+        builder.collapsibleGroup(translate("property.toolchain")) {
+            row(translate("property.toolchain.loomVersion", after = 1)) { comboBox(loomVersionModel).bindItem(loomVersionProperty).enabledIf(versionsLoadingProperty.not()) }
+            row(translate("property.toolchain.loaderVersion", after = 1)) { comboBox(loaderVersionModel).bindItem(loaderVersionProperty).enabledIf(versionsLoadingProperty.not()) }
 
-            row("Mod dependencies") {
-                button("Configure") {
+            row(translate("dependency.mod")) {
+                button(translate("configure")) {
                     val dialog = DependencyListDialog(
-                        dialogTitle = "Mod Dependencies",
+                        dialogTitle = translate("dependency.mod"),
                         mcVersions = selectedVersions,
                         initial = modDependencies,
                     )
@@ -235,10 +236,10 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                 }
             }
 
-            row("Dev dependencies") {
-                button("Configure") {
+            row(translate("dependency.dev")) {
+                button(translate("configure")) {
                     val dialog = DependencyListDialog(
-                        dialogTitle = "Dev Dependencies",
+                        dialogTitle = translate("dependency.dev"),
                         mcVersions = selectedVersions,
                         initial = devDependencies,
                     )
@@ -250,7 +251,7 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                 val summaryLabel = label(mappingsLabel()).component
                 mappingsConfigProperty.afterChange { summaryLabel.text = mappingsLabel() }
 
-                button("Configure") {
+                button(translate("configure")) {
                     val dialog = MappingsDialog(
                         mcVersions = selectedVersions,
                         initial = mappingsConfig
@@ -265,8 +266,8 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
             }
         }
 
-        builder.collapsibleGroup("Features") {
-            row("Access Widener") {
+        builder.collapsibleGroup(translate("property.features")) {
+            row(translate("property.features.aw")) {
                 comboBox(AWType.entries.toList())
                     .bindItem(awTypeProperty)
                     .applyToComponent {
@@ -275,56 +276,56 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
             }
 
             row {
-                checkBox("Use mixins").bindSelected(useMixinsProperty)
-                checkBox("Use datagen").bindSelected(useDatagenProperty)
-                checkBox("Use publishing (Modrinth)").bindSelected(generatePublishingProperty)
+                checkBox(translate("property.features.mixins")).bindSelected(useMixinsProperty)
+                checkBox(translate("property.features.datagen")).bindSelected(useDatagenProperty)
+                checkBox(translate("property.features.publishing")).bindSelected(generatePublishingProperty)
             }
 
             row {
-                checkBox("Separate resources")
+                checkBox(translate("property.features.separateResources"))
                     .bindSelected(generateVersionedResourcesProperty)
-                    .comment("Generate separate src/main/resources folders for all versions.")
+                    .comment(translate("property.features.separateResources.comment"))
             }
 
             row {
-                checkBox("Generate test config")
+                checkBox(translate("property.features.generateTests"))
                     .bindSelected(generateTestsProperty)
-                    .comment("Generate src/tests and add junit configuration to build files.")
+                    .comment(translate("property.features.generateTests.comment"))
             }
 
             row {
-                checkBox("Use separate packages")
+                checkBox(translate("property.features.separatePackages"))
                     .bindSelected(useSeparatePackagesProperty)
-                    .comment("Put all initialization entrypoints into different packages like common and common.data.")
+                    .comment(translate("property.features.separatePackages.comment"))
             }
 
             row {
-                checkBox("Use artifact collection")
+                checkBox(translate("property.features.artifactCollection"))
                     .bindSelected(artifactCollectionProperty)
-                    .comment("Add a gradle task 'buildAndCollect' which builds all versions and collects the jar files in /artifacts.")
+                    .comment(translate("property.features.artifactCollection.comment"))
             }
 
             row {
-                checkBox("Use GitHub build num in version")
+                checkBox(translate("property.features.githubBuildNum"))
                     .bindSelected(githubBuildNumberProperty)
-                    .comment("Add -\$buildNum to the archive java file.")
+                    .comment(translate("property.features.githubBuildNum.comment"))
             }
         }
 
-        builder.collapsibleGroup("Build System") {
-            row("Group ID: ") {
+        builder.collapsibleGroup(translate("property.buildSystem")) {
+            row(translate("property.buildSystem.groupId")) {
                 textField().bindText(groupIdProperty)
             }
 
-            row("Artifact ID: ") {
+            row(translate("property.buildSystem.artifactId")) {
                 textField().bindText(artifactIdProperty)
             }
 
-            row("Version: ") {
+            row(translate("property.buildSystem.version")) {
                 textField().bindText(versionProperty)
             }
 
-            row("Maximum RAM usage: ") {
+            row(translate("property.buildSystem.maxRam")) {
                 val min = 1024
                 val max = getMaxRecommendedRamMb()
 
@@ -370,14 +371,14 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
 
     private fun mappingsLabel(): String {
         val cfg = mappingsConfig
-        return "Mappings: " + when (cfg.type) {
-            MappingsType.OFFICIAL -> "Official (Mojmaps)"
+        return when (cfg.type) {
+            MappingsType.OFFICIAL -> translate("mappings", 0, 0, translate("mappings.official"))
             MappingsType.YARN -> {
                 val filled = cfg.yarnVersions.values.count { it.isNotBlank() }
                 val total = selectedVersions.size
-                if (filled == total && total > 0) "Yarn ($filled/${total} configured)"
-                else if (total == 0) "Yarn (no MC versions selected)"
-                else "Yarn ($filled/${total} configured, open to complete)"
+                if (filled == total && total > 0) translate("mappings", 0, 0, translate("mappings.yarn", 0, 0, filled, total))
+                else if (total == 0) translate("mappings", 0, 0, translate("mappings.yarn.empty"))
+                else translate("mappings", 0, 0, translate("mappings.yarn.incomplete", 0, 0, filled, total))
             }
         }
     }

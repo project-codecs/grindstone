@@ -2,6 +2,7 @@ package com.codex.idea.grindstone.wizard.component
 
 import com.codex.idea.grindstone.generator.model.DependencyEntry
 import com.codex.idea.grindstone.generator.model.DependencyVersionSpec
+import com.codex.idea.grindstone.utility.translate
 import com.codex.idea.grindstone.utility.versions.MavenVersions
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.observable.properties.PropertyGraph
@@ -30,12 +31,12 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
     private val isSingleModeProperty = graph.property(existingEntry?.versionSpec !is DependencyVersionSpec.Multi)
 
     private val modIdField = JTextField(existingEntry?.modId ?: "", 30)
-    private val addToFmjCheckbox = JBCheckBox("Add to fabric.mod.json depends", existingEntry?.addToFabricModJson ?: true)
+    private val addToFmjCheckbox = JBCheckBox(translate("dependency.dialog.addToFmj"), existingEntry?.addToFabricModJson ?: true)
     private val coordinateField = JTextField(existingEntry?.mavenCoordinate ?: "", 40)
-    private val repoUrlField = JTextField(existingEntry?.mavenRepo ?: "https://maven.fabricmc.net/", 40)
+    private val repoUrlField = JTextField(existingEntry?.mavenRepo ?: "", 40)
 
     private val singleVersionCombo = ComboBox<String>()
-    private val fetchButton = JButton("Fetch versions")
+    private val fetchButton = JButton(translate("dependency.dialog.fetch"))
     private val fetchingIcon = AsyncProcessIcon("DependencyDialogFetch")
     private val fetchStatusLabel = JBLabel("").also { it.foreground = JBColor.RED }
 
@@ -53,7 +54,7 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
     private var availableVersions: List<String> = emptyList()
 
     init {
-        title = if (existingEntry == null) "Add Dependency" else "Edit Dependency"
+        title = if (existingEntry == null) translate("dependency.dialog.title.add") else translate("dependency.dialog.title.edit")
         init()
 
         when (val spec = existingEntry?.versionSpec) {
@@ -99,7 +100,7 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
         val perVersionCard = JPanel(BorderLayout(0, 4)).apply {
             add(JBScrollPane(perVersionTable), BorderLayout.CENTER)
             val bottom = JPanel().apply {
-                add(JButton("Fetch Versions For All").also { btn ->
+                add(JButton(translate("dependency.dialog.fetch")).also { btn ->
                     btn.addActionListener { fetchVersions() }
                 })
             }
@@ -110,34 +111,34 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
         multiVersionPanel.add(perVersionCard, CARD_MULTI)
 
         return panel {
-            group("Mod Metadata") {
-                row("Maven coordinate:") {
+            group(translate("dependency.dialog.metadata")) {
+                row(translate("dependency.dialog.coordinate")) {
                     @Suppress("DialogTitleCapitalization")
                     cell(coordinateField).align(AlignX.FILL)
-                        .comment("e.g. net.fabricmc.fabric-api:fabric-api")
+                        .comment(translate("dependency.dialog.coordinate.comment"))
                 }
-                row("Maven repository URL:") {
+                row(translate("dependency.dialog.repoUrl")) {
                     @Suppress("DialogTitleCapitalization")
                     cell(repoUrlField).align(AlignX.FILL)
-                        .comment("e.g. https://maven.fabricmc.net/")
+                        .comment(translate("dependency.dialog.repoUrl.comment"))
                 }
                 row { cell(addToFmjCheckbox) }
-                row("Mod ID (fabric.mod.json, gradle.properties):") {
+                row(translate("dependency.dialog.modId")) {
                     cell(modIdField).align(AlignX.FILL)
-                        .comment("The id used in the depends block and in properties files, e.g. fabric-api")
+                        .comment(translate("dependency.dialog.modId.comment"))
                 }
             }
 
-            group("Version") {
+            group(translate("dependency.dialog.version")) {
                 buttonsGroup {
                     row {
-                        radioButton("Single version for all sub-versions")
+                        radioButton(translate("dependency.dialog.version.single"))
                             .applyToComponent {
                                 isSelected = isSingleModeProperty.get()
                                 addActionListener { isSingleModeProperty.set(true) }
                             }
 
-                        radioButton("Separate version per Minecraft version")
+                        radioButton(translate("dependency.dialog.version.separate"))
                             .applyToComponent {
                                 isSelected = !isSingleModeProperty.get()
                                 addActionListener { isSingleModeProperty.set(false) }
@@ -170,7 +171,7 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
 
         val split = MavenVersions.splitCoordinate(coordinate)
         if (split == null) {
-            fetchStatusLabel.text = "Invalid coordinate (expected group:artifact)"
+            fetchStatusLabel.text = translate("dependency.error.invalidCoordinate")
             return
         }
 
@@ -190,7 +191,7 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
                 availableVersions = versions
 
                 if (versions.isEmpty()) {
-                    fetchStatusLabel.text = "No versions found, check repo URL and coordinate"
+                    fetchStatusLabel.text = translate("dependency.error.noVersions")
                     return@invokeLater
                 }
 
@@ -208,18 +209,18 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
 
     override fun doValidate(): ValidationInfo? {
         val coord = coordinateField.text.trim()
-        if (coord.isEmpty()) return ValidationInfo("Maven coordinate is required", coordinateField)
-        if (MavenVersions.splitCoordinate(coord) == null) return ValidationInfo("Format must be groupId:artifactId", coordinateField)
+        if (coord.isEmpty()) return ValidationInfo(translate("dependency.error.coordinateRequired"), coordinateField)
+        if (MavenVersions.splitCoordinate(coord) == null) return ValidationInfo(translate("dependency.error.invalidCoordinate"), coordinateField)
 
         val repo = repoUrlField.text.trim()
-        if (repo.isEmpty()) return ValidationInfo("Maven repository URL is required", repoUrlField)
-        if (!repo.startsWith("http")) return ValidationInfo("Repo URL must start with http(s)://", repoUrlField)
+        if (repo.isEmpty()) return ValidationInfo(translate("dependency.error.repoUrlRequired"), repoUrlField)
+        if (!repo.startsWith("http")) return ValidationInfo(translate("dependency.error.repoUrlProtocol"), repoUrlField)
 
         if (modIdField.text.isBlank())
-            return ValidationInfo("Mod ID is required", modIdField)
+            return ValidationInfo(translate("dependency.error.modIdRequired"), modIdField)
 
         if (isSingleModeProperty.get() && singleVersionCombo.selectedItem == null)
-            return ValidationInfo("Select or fetch a version", singleVersionCombo)
+            return ValidationInfo(translate("dependency.error.versionRequired"), singleVersionCombo)
 
         return null
     }
@@ -253,7 +254,7 @@ private class PerVersionTableModel(private val mcVersions: List<String>, initial
 
     override fun getRowCount() = mcVersions.size
     override fun getColumnCount() = 2
-    override fun getColumnName(column: Int) = if (column == 0) "Minecraft Version" else "Dependency Version"
+    override fun getColumnName(column: Int) = if (column == 0) translate("mcVersion") else translate("dependency.dialog.version")
     override fun getColumnClass(column: Int) = String::class.java
     override fun isCellEditable(row: Int, column: Int) = column == 1
 

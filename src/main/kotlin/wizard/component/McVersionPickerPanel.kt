@@ -1,5 +1,6 @@
-package com.codex.idea.grindstone.wizard.panel
+package com.codex.idea.grindstone.wizard.component
 
+import com.codex.idea.grindstone.utility.translate
 import com.codex.idea.grindstone.wizard.step.McGameVersion
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.components.JBCheckBox
@@ -14,8 +15,8 @@ import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
 class McVersionPickerPanel(private val onSelectionChanged: (List<String>) -> Unit) : JPanel(BorderLayout(0, 4)) {
-    private val searchField = JBTextField().apply { emptyText.text = "Search versions…" }
-    private val showSnapshotsBox = JBCheckBox("Show snapshots", false)
+    private val searchField = JBTextField().apply { emptyText.text = translate("mcVersionPicker.search") }
+    private val showSnapshotsBox = JBCheckBox(translate("mcVersionPicker.showSnapshots"), false)
 
     private val checkboxes = mutableListOf<JBCheckBox>()
     private val selected = linkedSetOf<String>()

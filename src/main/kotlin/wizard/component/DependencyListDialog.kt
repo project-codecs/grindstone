@@ -2,6 +2,7 @@ package com.codex.idea.grindstone.wizard.component
 
 import com.codex.idea.grindstone.generator.model.DependencyEntry
 import com.codex.idea.grindstone.generator.model.DependencyVersionSpec
+import com.codex.idea.grindstone.utility.translate
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.components.JBList
@@ -72,7 +73,7 @@ private class DependencyListCellRenderer : DefaultListCellRenderer() {
                         append(" [${spec.version}]")
 
                     is DependencyVersionSpec.Multi ->
-                        append(" [per-version: ${spec.versions.size} entries]")
+                        append(" [${translate("dependency.perVersion", params = arrayOf(spec.versions.size))}]")
                 }
 
                 if (entry.addToFabricModJson) {
