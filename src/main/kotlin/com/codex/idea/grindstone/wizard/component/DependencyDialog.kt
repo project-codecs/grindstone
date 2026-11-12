@@ -19,8 +19,8 @@ import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.AsyncProcessIcon
 import java.awt.BorderLayout
-import java.awt.CardLayout
 import java.awt.Dimension
+import java.net.URI
 import javax.swing.*
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.TableCellEditor
@@ -33,29 +33,32 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
     private val modIdField = JTextField(existingEntry?.modId ?: "", 30)
     private val addToFmjCheckbox = JBCheckBox(translate("dependency.dialog.addToFmj"), existingEntry?.addToFabricModJson ?: true)
     private val coordinateField = JTextField(existingEntry?.mavenCoordinate ?: "", 40)
-    private val repoUrlField = JTextField(existingEntry?.mavenRepo ?: "", 40)
+    private val repoUrlField = JTextField(existingEntry?.repositories()?.joinToString(", ").orEmpty(), 40)
+    private val remapCheckbox = JBCheckBox(translate("dependency.dialog.remap"), existingEntry?.remap ?: true)
+    private val includeCheckbox = JBCheckBox(translate("dependency.dialog.include"), existingEntry?.includeInJar ?: false)
 
-    private val singleVersionCombo = ComboBox<String>()
+    private val singleVersionCombo = ComboBox<String>().apply { isEditable = true }
     private val fetchButton = JButton(translate("dependency.dialog.fetch"))
+    private val perVersionFetchButton = JButton(translate("dependency.dialog.fetch"))
+    private val autoDetectButton = JButton(translate("dependency.dialog.autoDetect"))
     private val fetchingIcon = AsyncProcessIcon("DependencyDialogFetch")
     private val fetchStatusLabel = JBLabel("").also { it.foreground = JBColor.RED }
-
-    private val singleVersionPanel = JPanel(CardLayout())
-    private val multiVersionPanel = JPanel(CardLayout())
 
     private lateinit var perVersionTableModel: PerVersionTableModel
     private lateinit var perVersionTable: JTable
 
-    companion object {
-        private const val CARD_SINGLE = "single"
-        private const val CARD_MULTI = "perVersion"
-    }
+    private var disposed = false
 
-    private var availableVersions: List<String> = emptyList()
+    override fun dispose() {
+        disposed = true
+        super.dispose()
+    }
 
     init {
         title = if (existingEntry == null) translate("dependency.dialog.title.add") else translate("dependency.dialog.title.edit")
         init()
+
+        perVersionTableModel.addTableModelListener { initValidation() }
 
         when (val spec = existingEntry?.versionSpec) {
             is DependencyVersionSpec.Single -> {
@@ -66,6 +69,8 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
         }
 
         fetchButton.addActionListener { fetchVersions() }
+        perVersionFetchButton.addActionListener { fetchVersions() }
+        autoDetectButton.addActionListener { fetchVersions(autoDetect = true) }
         addToFmjCheckbox.addActionListener { initValidation() }
 
         listOf(coordinateField, repoUrlField, modIdField).forEach { field ->
@@ -91,8 +96,6 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
             add(singleVersionCombo, BorderLayout.CENTER)
             val right = JPanel().apply {
                 add(fetchButton)
-                add(fetchingIcon)
-                add(fetchStatusLabel)
             }
             add(right, BorderLayout.EAST)
         }
@@ -100,15 +103,11 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
         val perVersionCard = JPanel(BorderLayout(0, 4)).apply {
             add(JBScrollPane(perVersionTable), BorderLayout.CENTER)
             val bottom = JPanel().apply {
-                add(JButton(translate("dependency.dialog.fetch")).also { btn ->
-                    btn.addActionListener { fetchVersions() }
-                })
+                add(perVersionFetchButton)
+                add(autoDetectButton)
             }
             add(bottom, BorderLayout.SOUTH)
         }
-
-        singleVersionPanel.add(singleCard, CARD_SINGLE)
-        multiVersionPanel.add(perVersionCard, CARD_MULTI)
 
         return panel {
             group(translate("dependency.dialog.metadata")) {
@@ -122,7 +121,11 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
                     cell(repoUrlField).align(AlignX.FILL)
                         .comment(translate("dependency.dialog.repoUrl.comment"))
                 }
-                row { cell(addToFmjCheckbox) }
+                row {
+                    cell(addToFmjCheckbox)
+                    cell(remapCheckbox)
+                    cell(includeCheckbox)
+                }
                 row(translate("dependency.dialog.modId")) {
                     cell(modIdField).align(AlignX.FILL)
                         .comment(translate("dependency.dialog.modId.comment"))
@@ -155,6 +158,10 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
                         .visibleIf(isSingleModeProperty.not())
                         .align(AlignX.FILL)
                 }
+                row {
+                    cell(fetchingIcon)
+                    cell(fetchStatusLabel)
+                }
             }
         }.also {
             it.preferredSize = Dimension(620, -1)
@@ -165,42 +172,85 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
         (existingEntry?.versionSpec as? DependencyVersionSpec.Multi)?.versions
             ?: mcVersions.associateWith { "" }
 
-    private fun fetchVersions() {
-        val coordinate = coordinateField.text.trim()
-        val repoUrl = repoUrlField.text.trim()
+    private fun repositories(): List<String> =
+        repoUrlField.text.split(',').map { it.trim().trimEnd('/') }.filter(String::isNotEmpty).distinct()
 
-        val split = MavenVersions.splitCoordinate(coordinate)
-        if (split == null) {
+    private fun validRepo(url: String): Boolean {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        return uri.scheme in listOf("https", "http") && uri.host != null &&
+            uri.rawQuery == null && uri.rawFragment == null && uri.userInfo == null
+    }
+
+    private fun fetchVersions(autoDetect: Boolean = false) {
+        val coordinate = coordinateField.text.trim()
+        val parts = MavenVersions.splitCoordinate(coordinate)
+        if (parts == null) {
             fetchStatusLabel.text = translate("dependency.error.invalidCoordinate")
             return
         }
 
+        val (groupId, artifactId) = parts
+        val configuredRepos = repositories()
+        if (configuredRepos.any { !validRepo(it) }) {
+            fetchStatusLabel.text = translate("dependency.error.repoUrlProtocol")
+            return
+        }
+
+        if (perVersionTable.isEditing && !perVersionTable.cellEditor.stopCellEditing()) return
+
+        val single = isSingleModeProperty.get()
+        val previousSingle = singleVersion()
+        val effectiveRepos = configuredRepos.ifEmpty {
+            listOf("https://repo.maven.apache.org/maven2")
+        }
+
         fetchStatusLabel.text = ""
-        fetchButton.isEnabled = false
+        val buttons = listOf(fetchButton, perVersionFetchButton, autoDetectButton)
+        buttons.forEach { it.isEnabled = false }
         fetchingIcon.isVisible = true
         fetchingIcon.resume()
 
-        val (groupId, artifactId) = split
-
         ApplicationManager.getApplication().executeOnPooledThread {
-            val versions = MavenVersions.fetchVersions(repoUrl, groupId, artifactId)
+            val versions = effectiveRepos
+                .flatMap { MavenVersions.fetchVersions(it, groupId, artifactId) }
+                .distinct()
+
             SwingUtilities.invokeLater {
+                if (disposed) return@invokeLater
+
                 fetchingIcon.suspend()
                 fetchingIcon.isVisible = false
-                fetchButton.isEnabled = true
-                availableVersions = versions
+                buttons.forEach { it.isEnabled = true }
+
+                if (
+                    coordinate != coordinateField.text.trim() ||
+                    configuredRepos != repositories() ||
+                    single != isSingleModeProperty.get()
+                ) return@invokeLater
+
+                if (single) {
+                    val previous = singleVersion().ifBlank { previousSingle }
+                    singleVersionCombo.removeAllItems()
+                    versions.forEach(singleVersionCombo::addItem)
+                    if (previous.isNotBlank()) {
+                        singleVersionCombo.editor.item = previous
+                    }
+                } else {
+                    perVersionTableModel.setAvailableVersions(mcVersions.associateWith { versions })
+                    if (autoDetect && versions.isNotEmpty()) {
+                        val missing = perVersionTableModel.autoDetect()
+                        if (missing.isNotEmpty()) {
+                            fetchStatusLabel.text = translate(
+                                "dependency.error.noAutoMatch",
+                                params = arrayOf(missing.joinToString())
+                            )
+                        }
+                    }
+                }
 
                 if (versions.isEmpty()) {
                     fetchStatusLabel.text = translate("dependency.error.noVersions")
-                    return@invokeLater
                 }
-
-                singleVersionCombo.removeAllItems()
-                versions.forEach { singleVersionCombo.addItem(it) }
-                val currentSingle = (existingEntry?.versionSpec as? DependencyVersionSpec.Single)?.version
-                if (currentSingle != null && versions.contains(currentSingle)) singleVersionCombo.selectedItem = currentSingle
-
-                perVersionTableModel.setAvailableVersions(versions)
 
                 initValidation()
             }
@@ -208,49 +258,71 @@ class DependencyDialog(private val mcVersions: List<String>, private val existin
     }
 
     override fun doValidate(): ValidationInfo? {
-        val coord = coordinateField.text.trim()
-        if (coord.isEmpty()) return ValidationInfo(translate("dependency.error.coordinateRequired"), coordinateField)
-        if (MavenVersions.splitCoordinate(coord) == null) return ValidationInfo(translate("dependency.error.invalidCoordinate"), coordinateField)
+        if (MavenVersions.splitCoordinate(coordinateField.text.trim()) == null)
+            return ValidationInfo(translate("dependency.error.invalidCoordinate"), coordinateField)
+        if (repositories().any { !validRepo(it) })
+            return ValidationInfo(translate("dependency.error.repoUrlProtocol"), repoUrlField)
 
-        val repo = repoUrlField.text.trim()
-        if (repo.isEmpty()) return ValidationInfo(translate("dependency.error.repoUrlRequired"), repoUrlField)
-        if (!repo.startsWith("http")) return ValidationInfo(translate("dependency.error.repoUrlProtocol"), repoUrlField)
+        if (!modIdField.text.trim().matches(Regex("[a-z][a-z0-9_-]*")))
+            return ValidationInfo(translate("dependency.error.invalidId"), modIdField)
 
-        if (modIdField.text.isBlank())
-            return ValidationInfo(translate("dependency.error.modIdRequired"), modIdField)
-
-        if (isSingleModeProperty.get() && singleVersionCombo.selectedItem == null)
-            return ValidationInfo(translate("dependency.error.versionRequired"), singleVersionCombo)
+        val versions = if (isSingleModeProperty.get()) listOf(singleVersion())
+            else perVersionTableModel.getVersionMap().values
+        if (versions.isEmpty() || versions.any { !it.matches(Regex("[A-Za-z0-9_.+~-]+")) })
+            return ValidationInfo(translate("dependency.error.versionRequired"),
+                if (isSingleModeProperty.get()) singleVersionCombo else perVersionTable)
 
         return null
     }
 
+    override fun doOKAction() {
+        if (perVersionTable.isEditing && !perVersionTable.cellEditor.stopCellEditing()) return
+        super.doOKAction()
+    }
+
+    private fun singleVersion(): String = singleVersionCombo.editor.item?.toString().orEmpty().trim()
+
     fun getResult(): DependencyEntry {
-        val versionSpec: DependencyVersionSpec =
-            if (isSingleModeProperty.get()) DependencyVersionSpec.Single(singleVersionCombo.selectedItem as String)
+        val versionSpec = if (isSingleModeProperty.get()) DependencyVersionSpec.Single(singleVersion())
             else DependencyVersionSpec.Multi(perVersionTableModel.getVersionMap())
+        val repos = repositories()
 
         return DependencyEntry(
             modId = modIdField.text.trim(),
             addToFabricModJson = addToFmjCheckbox.isSelected,
             mavenCoordinate = coordinateField.text.trim(),
-            mavenRepo = repoUrlField.text.trim(),
+            mavenRepo = repos.firstOrNull().orEmpty(),
             versionSpec = versionSpec,
+            additionalMavenRepos = repos.drop(1),
+            remap = remapCheckbox.isSelected,
+            includeInJar = includeCheckbox.isSelected,
         )
     }
 }
 
 private class PerVersionTableModel(private val mcVersions: List<String>, initialMap: Map<String, String>) : AbstractTableModel() {
     private val selected = LinkedHashMap<String, String>().apply { mcVersions.forEach { put(it, initialMap[it] ?: "") } }
-    private var availableVersions: List<String> = emptyList()
+    private var availableVersions: Map<String, List<String>> = emptyMap()
 
-    fun setAvailableVersions(versions: List<String>) {
+    fun setAvailableVersions(versions: Map<String, List<String>>) {
         availableVersions = versions
         fireTableDataChanged()
     }
 
     fun getVersionMap(): Map<String, String> = LinkedHashMap(selected)
-    fun getAvailableVersions(): List<String> = availableVersions
+    fun getAvailableVersions(row: Int): List<String> = availableVersions[mcVersions[row]].orEmpty()
+
+    fun autoDetect(): List<String> {
+        val missing = mutableListOf<String>()
+        for (mcVersion in mcVersions) {
+            val pattern = Regex("(?<![0-9.])${Regex.escape(mcVersion)}(?![0-9]|[.][0-9])", RegexOption.IGNORE_CASE)
+            val match = availableVersions[mcVersion].orEmpty().firstOrNull { pattern.containsMatchIn(it) }
+            if (match == null) missing += mcVersion
+            else selected[mcVersion] = match
+        }
+        fireTableDataChanged()
+        return missing
+    }
 
     override fun getRowCount() = mcVersions.size
     override fun getColumnCount() = 2
@@ -271,16 +343,16 @@ private class PerVersionTableModel(private val mcVersions: List<String>, initial
 }
 
 private class VersionComboEditor : AbstractCellEditor(), TableCellEditor {
-    private val combo = ComboBox<String>()
+    private val combo = ComboBox<String>().apply { isEditable = true }
 
     override fun getTableCellEditorComponent(table: JTable, value: Any?, isSelected: Boolean, row: Int, column: Int): java.awt.Component {
         val model = table.model as? PerVersionTableModel
         combo.removeAllItems()
         combo.addItem("")
-        model?.getAvailableVersions()?.forEach { combo.addItem(it) }
-        combo.selectedItem = value?.toString()?.takeIf { it.isNotEmpty() } ?: ""
+        model?.getAvailableVersions(table.convertRowIndexToModel(row))?.forEach { combo.addItem(it) }
+        combo.editor.item = value?.toString().orEmpty()
         return combo
     }
 
-    override fun getCellEditorValue(): Any = combo.selectedItem ?: ""
+    override fun getCellEditorValue(): Any = combo.editor.item?.toString().orEmpty().trim()
 }

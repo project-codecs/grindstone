@@ -49,6 +49,13 @@ class McVersionPickerPanel(private val onSelectionChanged: (List<String>) -> Uni
         onSelectionChanged(selected.toList())
     }
 
+    fun setSelectedVersions(versions: List<String>) {
+        selected.clear()
+        selected.addAll(versions)
+        rebuildGrid()
+        onSelectionChanged(selected.toList())
+    }
+
     private fun rebuildGrid() {
         val filter = searchField.text.trim()
         val showSnapshots = showSnapshotsBox.isSelected

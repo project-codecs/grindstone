@@ -26,6 +26,10 @@ class GrindstoneProjectGenerator(var project: Project, var context: WizardContex
         copyFiles(project.baseDirectory()!!)
 
         ApplicationManager.getApplication().runWriteAction {
+            if (config.licenseFileName.isNotEmpty()) {
+                createFile(config.licenseFileName, config.license.text(config.copyrightHolder).toByteArray(), project.baseDirectory()!!)
+            }
+
             GradleFileGenerator(project, config)
                 .properties()
                 .settings()
@@ -46,13 +50,14 @@ class GrindstoneProjectGenerator(var project: Project, var context: WizardContex
                 val sourceName = staticFiles[i]
                 val targetName = staticFiles[i + 1].ifEmpty { sourceName }
 
+                i += 2
+                if (sourceName == "CHANGELOG.md" && !config.generateChangelog) continue
+
                 val resourcePath = "/templates/static/$sourceName"
                 val stream = javaClass.getResourceAsStream(resourcePath) ?: error("Missing resource file: $resourcePath")
                 val bytes = stream.use { it.readBytes() }
 
                 createFile(targetName, bytes, targetDir)
-
-                i += 2
             }
         }
     }

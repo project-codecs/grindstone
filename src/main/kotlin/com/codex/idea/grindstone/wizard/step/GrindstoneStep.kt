@@ -17,11 +17,16 @@ import com.codex.idea.grindstone.wizard.component.McVersionPickerPanel
 import com.intellij.ide.wizard.AbstractNewProjectWizardStep
 import com.intellij.ide.wizard.NewProjectWizardBaseData
 import com.intellij.ide.wizard.NewProjectWizardStep
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.PathManager
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.observable.properties.GraphProperty
 import com.intellij.openapi.observable.util.bindStorage
 import com.intellij.openapi.observable.util.not
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.validation.CHECK_NON_EMPTY
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
@@ -40,14 +45,26 @@ import com.sun.management.OperatingSystemMXBean
 import kotlinx.serialization.Serializable
 import java.lang.management.ManagementFactory
 import java.util.Hashtable
+import java.io.File
+import javax.swing.JFileChooser
+import javax.swing.JMenuItem
+import javax.swing.JPopupMenu
+import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.DefaultComboBoxModel
+import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.SwingUtilities
 
-enum class AWType(val label: String) {
+enum class AWType(val label: String, val perVersion: Boolean = false, val classTweaker: Boolean = false) {
     SINGLE(translate("awType.single")),
-    SPREAD(translate("awType.spread")),
+    SPREAD(translate("awType.spread"), perVersion = true),
+    CLASS_TWEAKER_SINGLE(translate("awType.classTweaker.single"), classTweaker = true),
+    CLASS_TWEAKER_SPREAD(translate("awType.classTweaker.spread"), perVersion = true, classTweaker = true),
     NONE(translate("none"));
+
+    val shared: Boolean get() = this != NONE && !perVersion
+    val extension: String get() = if (classTweaker) "classtweaker" else "accesswidener"
+    val header: String get() = if (classTweaker) "classTweaker v2 named\n" else "accessWidener v2 named\n"
 }
 
 @Serializable
@@ -98,11 +115,22 @@ data class GrindstoneConfig(
     val generatePublishing: Boolean,
     val generateTests: Boolean,
     val useArtifactCollection: Boolean,
-    val useGithubBuildNumber: Boolean
+    val useGithubBuildNumber: Boolean,
+    val license: ProjectLicense = ProjectLicense.ALL_RIGHTS_RESERVED,
+    val licenseFileName: String = "LICENSE",
+    val copyrightHolder: String = "",
+    val generateChangelog: Boolean = true,
+    val addTreeComments: Boolean,
 )
 
 class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardStep(parent) {
     private val baseData = data.getUserData(NewProjectWizardBaseData.KEY) ?: error(translate("error.noData"))
+
+    private val licenseProperty = propertyGraph.property(ProjectLicense.ALL_RIGHTS_RESERVED)
+    private val licenseFileProperty = propertyGraph.property("LICENSE")
+    private val copyrightHolderProperty = propertyGraph.property("")
+    private val changelogProperty = propertyGraph.property(true)
+    private var versionsLoadRequest = 0
 
     private val versionsLoadingProperty = propertyGraph.property(true)
     private val noVersionsProperty = propertyGraph.property(false)
@@ -149,6 +177,9 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     val mappingsConfigProperty: GraphProperty<MappingsConfig> = propertyGraph.property(MappingsConfig(MappingsType.OFFICIAL))
     var mappingsConfig by mappingsConfigProperty
 
+    val addTreeCommentsProperty: GraphProperty<Boolean> = propertyGraph.property(false);
+    var addTreeComments by addTreeCommentsProperty
+
     val maxMemoryProperty = propertyGraph.property(2048)
 
     private lateinit var versionPicker: McVersionPickerPanel
@@ -157,9 +188,10 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     init {
         selectedVersionsProperty.afterChange { versions ->
             val sorted = versions.sortedWith(compareByDescending { McVersion.parse(it) })
+            val controller = vcsVersion
             controllerComboModel.removeAllElements()
             sorted.forEach { controllerComboModel.addElement(it) }
-            if (vcsVersion !in sorted) vcsVersion = sorted.firstOrNull() ?: ""
+            vcsVersion = controller.takeIf { it in sorted } ?: sorted.firstOrNull().orEmpty()
         }
 
         modIdProperty.dependsOn(modNameProperty) {
@@ -178,6 +210,8 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     }
 
     override fun setupUI(builder: Panel) {
+        builder.presetRow()
+
         builder.row {
             cell(AsyncProcessIcon("StonecutterStep versions load"))
             label(translate("loading.mcVersions"))
@@ -267,6 +301,29 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
         }
 
         builder.collapsibleGroup(translate("property.features")) {
+            row(translate("property.features.license")) {
+                comboBox(ProjectLicense.entries.toList()).bindItem(licenseProperty).applyToComponent {
+                    renderer = SimpleListCellRenderer.create("") { it.id }
+                }
+            }
+
+            row(translate("property.features.licenseFile")) {
+                textField().bindText(licenseFileProperty)
+                    .comment(translate("property.features.licenseFile.comment"))
+                    .validationOnApply {
+                        configurationError(currentConfig())?.let { message -> ValidationInfo(message) }
+                    }
+            }
+
+            row(translate("property.features.copyrightHolder")) {
+                textField().bindText(copyrightHolderProperty)
+                    .comment(translate("property.features.copyrightHolder.comment"))
+            }
+
+            row {
+                checkBox(translate("property.features.changelog")).bindSelected(changelogProperty)
+            }
+
             row(translate("property.features.aw")) {
                 comboBox(AWType.entries.toList())
                     .bindItem(awTypeProperty)
@@ -279,6 +336,10 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                 checkBox(translate("property.features.mixins")).bindSelected(useMixinsProperty)
                 checkBox(translate("property.features.datagen")).bindSelected(useDatagenProperty)
                 checkBox(translate("property.features.publishing")).bindSelected(generatePublishingProperty)
+            }
+
+            row {
+                checkBox(translate("property.features.addTreeComments")).bindSelected(addTreeCommentsProperty).comment(translate("property.features.addTreeComments.comment"))
             }
 
             row {
@@ -327,9 +388,9 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
 
             row(translate("property.buildSystem.maxRam")) {
                 val min = 1024
-                val max = getMaxRecommendedRamMb()
+                val max = getMaxRecommendedRamMb().coerceAtLeast(min)
 
-                val slider = JBSlider(JBSlider.HORIZONTAL, min, max, 2048).apply {
+                val slider = JBSlider(JBSlider.HORIZONTAL, min, max, maxMemoryProperty.get().coerceIn(min, max)).apply {
                     paintTicks = true
                     paintLabels = true
                     snapToTicks = true
@@ -352,6 +413,7 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                     maximumSize = size
                 }
 
+                maxMemoryProperty.afterChange { slider.value = it.coerceIn(slider.minimum, slider.maximum) }
                 slider.addChangeListener {
                     val valueMb = slider.value
 
@@ -395,34 +457,36 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
     }
 
     private fun loadVersions() {
+        val request = ++versionsLoadRequest
+        val yarn = mappingsConfig.type == MappingsType.YARN
+        versionsLoadingProperty.set(true)
         ApplicationManager.getApplication().executeOnPooledThread {
-            val mcVersions = MinecraftVersions.downloadData(mappingsConfig.type == MappingsType.YARN)
+            val mcVersions = MinecraftVersions.downloadData(yarn)
             val loaderVersions = LoaderVersions.downloadData()
             val loomVersions: List<String> = MavenVersions.fetchVersions("https://maven.fabricmc.net/", "net.fabricmc", "fabric-loom").sortedByDescending { SemVer.parse(it) }
 
             SwingUtilities.invokeLater {
+                if (request != versionsLoadRequest) return@invokeLater
                 versionsLoadingProperty.set(false)
+                noVersionsProperty.set(mcVersions.isEmpty())
 
+                val requestedLoader = loaderVersionProperty.get()
+                val requestedLoom = loomVersionProperty.get()
                 loaderVersionModel.removeAllElements()
                 loaderVersions.forEach { loaderVersionModel.addElement(it.version) }
 
-                if (loaderVersionProperty.get().isBlank()) {
-                    loaderVersionProperty.set(loaderVersions.firstOrNull()?.version ?: "")
-                }
+                if (requestedLoader.isNotBlank() && loaderVersionModel.getIndexOf(requestedLoader) == -1)
+                    loaderVersionModel.addElement(requestedLoader)
+                loaderVersionProperty.set(requestedLoader.ifBlank { loaderVersions.firstOrNull()?.version.orEmpty() })
 
                 loomVersionModel.removeAllElements()
                 loomVersions.forEach { loomVersionModel.addElement(it) }
 
-                if (loomVersionProperty.get().isBlank()) {
-                    loomVersionProperty.set(loomVersions.firstOrNull() ?: "")
-                }
+                if (requestedLoom.isNotBlank() && loomVersionModel.getIndexOf(requestedLoom) == -1)
+                    loomVersionModel.addElement(requestedLoom)
+                loomVersionProperty.set(requestedLoom.ifBlank { loomVersions.firstOrNull().orEmpty() })
 
-                if (mcVersions.isEmpty()) {
-                    noVersionsProperty.set(true)
-                    return@invokeLater
-                }
-
-                versionPicker.setVersions(mcVersions)
+                if (mcVersions.isNotEmpty()) versionPicker.setVersions(mcVersions)
             }
         }
     }
@@ -442,15 +506,120 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
             .trim('-')
     }
 
-    override fun setupProject(project: Project) {
+    private fun Panel.presetRow() {
+        val directory = File(PathManager.getConfigPath(), "grindstone/presets")
+        val placeholder = translate("preset.select")
+        val savedPresets = ComboBox<String>()
+
+        fun refreshPresets() {
+            val names = directory.listFiles().orEmpty()
+                .filter { it.isFile && it.extension.equals("json", ignoreCase = true) }
+                .map { it.name }
+                .sortedBy { it.lowercase() }
+
+            savedPresets.model = DefaultComboBoxModel(
+                (listOf(placeholder) + names).toTypedArray()
+            )
+        }
+
+        fun openPreset(file: File) {
+            runCatching {
+                applyPreset(PresetFiles.open(file.toPath()))
+            }.onFailure {
+                Messages.showErrorDialog(it.localizedMessage ?: translate("preset.error.open"), translate("preset.open"))
+            }
+        }
+
+        fun savePreset(file: File) {
+            if (file.exists() && Messages.showYesNoDialog(
+                    translate("preset.replace", params = arrayOf(file.name)),
+                    translate("preset.save"),
+                    Messages.getQuestionIcon()
+                ) != Messages.YES
+            ) return
+
+            runCatching {
+                java.nio.file.Files.createDirectories(file.toPath().toAbsolutePath().parent)
+                PresetFiles.save(file.toPath(), currentConfig())
+            }.onSuccess {
+                refreshPresets()
+            }.onFailure {
+                Messages.showErrorDialog(it.localizedMessage ?: translate("preset.error.save"), translate("preset.save"))
+            }
+        }
+
+        fun jsonName(name: String): String =
+            if (name.endsWith(".json", ignoreCase = true)) name else "$name.json"
+
+        fun chooser(): JFileChooser = JFileChooser(directory.takeIf { it.isDirectory }).apply {
+            fileFilter = FileNameExtensionFilter(translate("preset.fileType"), "json")
+        }
+
+        refreshPresets()
+        savedPresets.addActionListener {
+            val index = savedPresets.selectedIndex
+            if (index > 0) {
+                val name = savedPresets.getItemAt(index)
+                savedPresets.selectedIndex = 0
+                openPreset(File(directory, name))
+            }
+        }
+
+        row(translate("preset.group")) {
+            button(translate("preset.open")) { event ->
+                val dialog = chooser()
+                if (dialog.showOpenDialog(event.source as JComponent) == JFileChooser.APPROVE_OPTION) {
+                    openPreset(dialog.selectedFile)
+                }
+            }
+
+            button(translate("preset.save")) { event ->
+                val anchor = event.source as JComponent
+                JPopupMenu().apply {
+                    add(JMenuItem(translate("preset.save")).apply {
+                        addActionListener {
+                            val name = Messages.showInputDialog(
+                                translate("preset.enterName"),
+                                translate("preset.save"),
+                                Messages.getQuestionIcon()
+                            )?.trim() ?: return@addActionListener
+
+                            if (name.isBlank() || name == "." || name == ".." ||
+                                name.any { it.isISOControl() || it in "<>:\"/\\|?*" }
+                            ) {
+                                Messages.showErrorDialog(translate("preset.invalidName"), translate("preset.save"))
+                                return@addActionListener
+                            }
+
+                            savePreset(File(directory, jsonName(name)))
+                        }
+                    })
+
+                    add(JMenuItem(translate("preset.saveAs")).apply {
+                        addActionListener {
+                            val dialog = chooser()
+                            if (dialog.showSaveDialog(anchor) == JFileChooser.APPROVE_OPTION) {
+                                val selected = dialog.selectedFile
+                                savePreset(File(selected.parentFile, jsonName(selected.name)))
+                            }
+                        }
+                    })
+                }.show(anchor, 0, anchor.height)
+            }
+
+            cell(savedPresets).align(AlignX.FILL)
+        }
+    }
+
+    private fun currentConfig(): GrindstoneConfig {
         val cfg = mappingsConfig
-        val config = GrindstoneConfig(
+        return GrindstoneConfig(
             selectedVersions = selectedVersions,
             vcsVersion = vcsVersion,
 
             modId = modIdProperty.get(),
             modName = modNameProperty.get(),
-            mainClass = modNameProperty.get(),
+            mainClass = mainClassProperty.get(),
 
             groupId = groupIdProperty.get(),
             artifactId = artifactIdProperty.get(),
@@ -476,9 +645,83 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
             generatePublishing = generatePublishingProperty.get(),
             generateTests = generateTestsProperty.get(),
             useArtifactCollection = artifactCollectionProperty.get(),
-            useGithubBuildNumber = githubBuildNumberProperty.get()
+            useGithubBuildNumber = githubBuildNumberProperty.get(),
+            license = licenseProperty.get(),
+            licenseFileName = licenseFileProperty.get().trim(),
+            copyrightHolder = copyrightHolderProperty.get().trim(),
+            generateChangelog = changelogProperty.get(),
+            addTreeComments = addTreeCommentsProperty.get()
         )
+    }
 
+    private fun applyPreset(config: GrindstoneConfig) {
+        versionPicker.setSelectedVersions(config.selectedVersions)
+        vcsVersion = config.vcsVersion.takeIf { it in config.selectedVersions } ?: vcsVersion
+
+        modNameProperty.set(config.modName)
+        modIdProperty.set(config.modId)
+        groupIdProperty.set(config.groupId)
+        artifactIdProperty.set(config.artifactId)
+        versionProperty.set(config.version)
+        maxMemoryProperty.set(config.maxMemoryUsage.coerceIn(1024, getMaxRecommendedRamMb().coerceAtLeast(1024)))
+
+        fabricApiVersionProperty.set(config.fabricApiVersion)
+        loomVersionProperty.set(config.loomVersion)
+        loaderVersionProperty.set(config.fabricLoaderVersion)
+        mappingsConfig = MappingsConfig(MappingsType.valueOf(config.mappingsType.uppercase()), config.yarnVersions)
+        modDependencies = config.modDependencies
+        devDependencies = config.devDependencies
+
+        awTypeProperty.set(config.accessWidenerType)
+        useMixinsProperty.set(config.useMixins)
+        useDatagenProperty.set(config.useDatagen)
+        useSeparatePackagesProperty.set(config.useSeparatePackges)
+        mainClassProperty.set(config.mainClass)
+        generateVersionedResourcesProperty.set(config.generateVersionedResources)
+        generatePublishingProperty.set(config.generatePublishing)
+        generateTestsProperty.set(config.generateTests)
+        artifactCollectionProperty.set(config.useArtifactCollection)
+        githubBuildNumberProperty.set(config.useGithubBuildNumber)
+        licenseProperty.set(config.license)
+        licenseFileProperty.set(config.licenseFileName)
+        copyrightHolderProperty.set(config.copyrightHolder)
+        changelogProperty.set(config.generateChangelog)
+        addTreeCommentsProperty.set(config.addTreeComments)
+        loadVersions()
+    }
+
+    private fun configurationError(config: GrindstoneConfig): String? {
+        if (!ProjectLicense.validFileName(config.licenseFileName))
+            return translate("property.features.licenseFile.invalid")
+
+        if (config.accessWidenerType.classTweaker) {
+            val supported = runCatching {
+                val loom = SemVer.parse(config.loomVersion)
+                val loader = SemVer.parse(config.fabricLoaderVersion)
+                compareValues(loom, SemVer.parse("1.12.0")) >= 0 &&
+                    compareValues(loader, SemVer.parse("0.18.0")) >= 0
+            }.getOrDefault(false)
+            if (!supported) return translate("awType.classTweaker.requirements")
+        }
+
+        for (dependencies in listOf(config.modDependencies, config.devDependencies)) {
+            if (dependencies.distinctBy { it.modId }.size != dependencies.size)
+                return translate("dependency.error.duplicateId")
+            val missing = dependencies.firstOrNull { dependency ->
+                config.selectedVersions.any { dependency.versionFor(it).isBlank() }
+            }
+            if (missing != null) return translate("dependency.error.incomplete", params = arrayOf(missing.modId))
+        }
+        return null
+    }
+
+    override fun setupProject(project: Project) {
+        val config = currentConfig()
+        val error = configurationError(config)
+        if (error != null) {
+            Messages.showErrorDialog(error, translate("error.invalidConfiguration"))
+            return
+        }
         GrindstoneProjectGenerator(project, context, config).generate()
     }
 }

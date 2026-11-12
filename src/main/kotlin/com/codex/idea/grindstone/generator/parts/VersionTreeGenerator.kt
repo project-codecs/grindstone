@@ -3,7 +3,6 @@ package com.codex.idea.grindstone.generator.parts
 import com.codex.idea.grindstone.generator.model.DependencyEntry
 import com.codex.idea.grindstone.utility.baseDirectory
 import com.codex.idea.grindstone.utility.createDirs
-import com.codex.idea.grindstone.wizard.step.AWType
 import com.codex.idea.grindstone.wizard.step.GrindstoneConfig
 import com.intellij.openapi.project.Project
 
@@ -17,10 +16,10 @@ class VersionTreeGenerator(project: Project, var config: GrindstoneConfig) {
             val dir = versions.createDirs(version)
             var resources = dir
 
-            if (config.generateVersionedResources || config.accessWidenerType == AWType.SPREAD) resources = dir.createDirs("src/main/resources")
+            if (config.generateVersionedResources || config.accessWidenerType.perVersion) resources = dir.createDirs("src/main/resources")
 
-            if (config.accessWidenerType == AWType.SPREAD) resources.createChildData(this, "$version.accesswidener")
-                .setBinaryContent("accessWidener v2 named\n".toByteArray())
+            if (config.accessWidenerType.perVersion) resources.createChildData(this, "$version.${config.accessWidenerType.extension}")
+                .setBinaryContent(config.accessWidenerType.header.toByteArray())
 
             dir.createChildData(this, "gradle.properties").setBinaryContent(propertiesFor(version).toByteArray())
         }
@@ -49,11 +48,11 @@ class VersionTreeGenerator(project: Project, var config: GrindstoneConfig) {
 
         if (shouldAppendLine) b.appendLine()
 
-        b.appendLine("# Minecraft version(s) the mod can be installed in, used in fabric.mod.json. Multiple statements are valid (e.g. '>=1.21.6 <=1.21.8')")
+        if (config.addTreeComments) b.appendLine("# Minecraft version(s) the mod can be installed in, used in fabric.mod.json. Multiple statements are valid (e.g. '>=1.21.6 <=1.21.8')")
         b.appendLine("mod.mc_dep=>=$version")
 
-        if (config.accessWidenerType == AWType.SPREAD) {
-            b.appendLine("# Has to match the name of the folder it is contained in (or at least the name of the .accesswidener file)")
+        if (config.accessWidenerType.perVersion) {
+            b.appendLine("# Has to match the name of the folder it is contained in (or at least the name of the access file)")
             b.appendLine("mod.mc_title=$version")
         }
 

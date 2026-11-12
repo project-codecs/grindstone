@@ -11,7 +11,25 @@ sealed class DependencyVersionSpec {
     data class Multi(val versions: Map<String, String>) : DependencyVersionSpec() // mc -> dep
 }
 
-data class DependencyEntry(val modId: String, val addToFabricModJson: Boolean, val mavenCoordinate: String, val mavenRepo: String, val versionSpec: DependencyVersionSpec) {
+@Serializable
+data class DependencyEntry(
+    val modId: String,
+    val addToFabricModJson: Boolean,
+    val mavenCoordinate: String,
+    val mavenRepo: String,
+    val versionSpec: DependencyVersionSpec,
+    val additionalMavenRepos: List<String> = emptyList(),
+    val remap: Boolean = true,
+    val includeInJar: Boolean = false,
+) {
+    val resourceVersionKey: String
+        get() = "dep_" + modId.replace("_", "_u").replace("-", "_h")
+
+    fun repositories(): List<String> = (listOf(mavenRepo) + additionalMavenRepos)
+        .map { it.trim().trimEnd('/') }
+        .filter(String::isNotEmpty)
+        .distinct()
+
     fun versionFor(mcVersion: String): String {
         return when(versionSpec) {
             is DependencyVersionSpec.Single -> versionSpec.version

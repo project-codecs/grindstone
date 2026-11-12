@@ -12,6 +12,7 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
     var root: VirtualFile = project.baseDirectory()!!
 
     fun sprout() {
+        val entrypointClass = config.mainClass.substringAfterLast('.')
         val groupId = config.groupId
         val groupPath = groupId.replace('.', '/') + "/${config.modId}"
 
@@ -21,33 +22,33 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
 
         val mainJava = root.createDirs("src/main/java")
 
-        mainJava.createDirs(mainPackagePath).createChildData(this, "${config.mainClass}.java")
+        mainJava.createDirs(mainPackagePath).createChildData(this, "$entrypointClass.java")
             .setBinaryContent(mainClassContent(
                 packageName = mainPackagePath.replace('/', '.'),
-                className = config.mainClass,
+                className = entrypointClass,
                 modId = config.modId
             ).toByteArray())
 
-        mainJava.createDirs(clientPackagePath).createChildData(this, "${config.mainClass}Client.java")
+        mainJava.createDirs(clientPackagePath).createChildData(this, "${entrypointClass}Client.java")
             .setBinaryContent(clientClassContent(
                 packageName = clientPackagePath.replace('/', '.'),
-                className = "${config.mainClass}Client"
+                className = "${entrypointClass}Client"
             ).toByteArray())
 
         if (config.useDatagen) {
-            mainJava.createDirs(dataPackagePath).createChildData(this, "${config.mainClass}DataGenerator.java")
+            mainJava.createDirs(dataPackagePath).createChildData(this, "${entrypointClass}DataGenerator.java")
                 .setBinaryContent(datagenClassContent(
                     packageName = dataPackagePath.replace('/', '.'),
-                    className = "${config.mainClass}DataGenerator"
+                    className = "${entrypointClass}DataGenerator"
                 ).toByteArray())
         }
 
         if (config.useMixins) mainJava.createDirs("$groupPath/mixin")
         val mainResources = root.createDirs("src/main/resources")
 
-        if (config.accessWidenerType == AWType.SINGLE)
-            mainResources.createChildData(this, "${config.modId}.accesswidener")
-                .setBinaryContent("accessWidener v2 named\n".toByteArray())
+        if (config.accessWidenerType.shared)
+            mainResources.createChildData(this, "${config.modId}.${config.accessWidenerType.extension}")
+                .setBinaryContent(config.accessWidenerType.header.toByteArray())
 
         if (config.generateTests) {
             root.createDirs("src/test/java")
@@ -56,9 +57,9 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
 
         mainResources.createChildData(this, "fabric.mod.json")
             .setBinaryContent(fabricModJson(
-                mainPackagePath.replace('/', '.') + config.mainClass,
-                "${clientPackagePath.replace('/', '.')}.${config.mainClass}Client",
-                "${dataPackagePath.replace('/', '.')}.${config.mainClass}DataGenerator"
+                "${mainPackagePath.replace('/', '.')}.$entrypointClass",
+                "${clientPackagePath.replace('/', '.')}.${entrypointClass}Client",
+                "${dataPackagePath.replace('/', '.')}.${entrypointClass}DataGenerator"
             ).toByteArray())
 
         if (config.useMixins) mainResources.createChildData(this, "${config.modId}.mixins.json")
@@ -106,8 +107,8 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
         
         public class $className implements DataGeneratorEntrypoint {
             @Override
-            public void onInitializeDataGenerator(FabricDataGenerator generator) {
-                FabricDataGenerator.Pack pack = generator.createPack();
+            public void onInitializeDataGenerator(FabricDataGenerator com.codex.idea.grindstone.generator) {
+                FabricDataGenerator.Pack pack = com.codex.idea.grindstone.generator.createPack();
             }
         }
     """.trimIndent() + "\n"
@@ -121,16 +122,16 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
           "description": "CHANGE-ME",
           "authors": [],
           "contact": {},
-          "license": "All-Rights-Reserved",
+          "license": "${config.license.id}",
           "icon": "assets/${config.modId}/icon.png",
-          "environment": "*",${if (config.accessWidenerType != AWType.NONE) "\n          \"accessWidener\": \"\${aw}.accesswidener\"," else ""}
+          "environment": "*",${if (config.accessWidenerType != AWType.NONE) "\n          \"accessWidener\": \"\${aw}.${config.accessWidenerType.extension}\"," else ""}
           "entrypoints": {
             "main": [ "$mainClass" ],
             "client": [ "$clientClass" ]${if (config.useDatagen) ",\n            \"fabric-datagen\": [ \"$datagenClass\" ]" else ""}
           },
           ${if (config.useMixins) "\"mixins\": [ \"${config.modId}.mixins.json\" ],\n" else ""}
           "depends": {
-            "minecraft": "${'$'}{minecraft}"${buildDepends()}
+            "minecraft": "${'$'}{minecraft}"${if (config.accessWidenerType.classTweaker) ",\n            \"fabricloader\": \">=0.18.0\"" else ""}${buildDepends()}
           }
         }
     """.trimIndent()
@@ -156,12 +157,12 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
     """.trimIndent()
 
     private fun buildDepends(): String {
-        val deps = config.modDependencies
+        val deps = config.modDependencies.filter { it.addToFabricModJson }
         if (deps.isEmpty()) return ""
 
         val b = StringBuilder()
         for (dependency in deps) {
-            b.append(",\n            \"${dependency.modId}\": \">=\${${dependency.modId.replace('-', '_')}}\"")
+            b.append(",\n            \"${dependency.modId}\": \">=\${${dependency.resourceVersionKey}}\"")
         }
         return b.toString()
     }

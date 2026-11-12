@@ -4,6 +4,7 @@ import com.codex.idea.grindstone.generator.model.DependencyEntry
 import com.codex.idea.grindstone.generator.model.DependencyVersionSpec
 import com.codex.idea.grindstone.utility.translate
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.components.JBList
 import java.awt.Component
@@ -57,6 +58,12 @@ class DependencyListDialog(dialogTitle: String, private val mcVersions: List<Str
     private fun removeSelected() {
         val index = list.selectedIndex.takeIf { it >= 0 } ?: return
         listModel.removeElementAt(index)
+    }
+
+    override fun doValidate(): ValidationInfo? {
+        val entries = getResult()
+        return if (entries.distinctBy(DependencyEntry::modId).size == entries.size) null
+        else ValidationInfo(translate("dependency.error.duplicateId"), list)
     }
 
     fun getResult(): List<DependencyEntry> = List(listModel.size) { listModel.getElementAt(it) }

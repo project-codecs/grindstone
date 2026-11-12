@@ -2,7 +2,6 @@ package com.codex.idea.grindstone.generator.parts
 
 import androidx.compose.ui.util.fastJoinToString
 import com.codex.idea.grindstone.generator.model.DependencyEntry
-import com.codex.idea.grindstone.generator.model.DependencyVersionSpec
 import com.codex.idea.grindstone.utility.FileBuilder
 import com.codex.idea.grindstone.utility.baseDirectory
 import com.codex.idea.grindstone.wizard.step.AWType
@@ -89,6 +88,7 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
     }
 
     fun build() {
+        val repositories = buildRepositories()
         val builder = FileBuilder(root.createChildData(this, "build.gradle.kts"))
             .append("plugins {")
             .append("""    id("com.modrinth.minotaur") version "2+"""") { config.generatePublishing }
@@ -131,14 +131,9 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
                 }
                 
                 repositories {
-                    fun strictMaven(url: String, alias: String, vararg groups: String) = exclusiveContent {
-                        forRepository { maven(url) { name = alias } }
-                        filter { groups.forEach(::includeGroup) }
-                    }
-                    
-                ${buildRepositories()}
             """.trimIndent())
             .append("    mavenCentral()")
+            .append(repositories) { repositories.isNotEmpty() }
             .append("}")
             .blank()
             .append("""
@@ -155,26 +150,32 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
             .append("""    testRuntimeOnly("org.junit.platform:junit-platform-launcher")""") { config.generateTests }
             .blank() { config.generateTests }
 
-        generateDependencies(builder, config.modDependencies, "modImplementation(", "", false)
+        generateDependencies(builder, config.modDependencies, "    ", dev = false)
 
         if (config.devDependencies.isNotEmpty()) {
             builder
                 .append("    sc.constants[\"release\"]?.let {")
                 .append("        if (!it) {")
 
-            generateDependencies(builder, config.devDependencies, "modLocalRuntime(", "        ", true)
+            generateDependencies(builder, config.devDependencies, "            ", dev = true)
 
             builder
                 .append("        }")
                 .append("    }")
         }
 
+        for ((dependencies, prefix) in listOf(config.modDependencies to "", config.devDependencies to "r.")) {
+            for (dependency in dependencies.filter(DependencyEntry::includeInJar)) {
+                builder.append("    include(${dependencyNotation(dependency, prefix)})")
+            }
+        }
+
         builder
             .append("}")
             .blank()
             .append("loom {")
-            .append("""    accessWidenerPath = project.file("src/main/resources/${'$'}{property("mod.mc_title")}.accesswidener")""") { config.accessWidenerType == AWType.SPREAD }
-            .append("""    accessWidenerPath = project.file("src/main/resources/${config.modId}.accesswidener")""") { config.accessWidenerType == AWType.SINGLE }
+            .append("""    accessWidenerPath = project.file("src/main/resources/${'$'}{property("mod.mc_title")}.${config.accessWidenerType.extension}")""") { config.accessWidenerType.perVersion }
+            .append("""    accessWidenerPath = rootProject.file("src/main/resources/${config.modId}.${config.accessWidenerType.extension}")""") { config.accessWidenerType.shared }
             .blank() { config.accessWidenerType != AWType.NONE }
             .append("""
                     decompilerOptions.named("vineflower") {
@@ -282,12 +283,13 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
                 val changelogText = rootProject.file("CHANGELOG.md").readText()
                 val regex = Regex(""${'"'}## \[\d+(?:\.\d+)*\] - \d{4}-\d{2}-\d{2}[\s\S]*?(?=\n## \[|$)""${'"'})
                 val latestChange = regex.find(changelogText)?.value ?: "No changelog available"
-
+            """.trimIndent()) { config.generatePublishing && config.generateChangelog }
+            .append("""
                 publishMods {
                     file = tasks.remapJar.map { it.archiveFile.get() }
-                    displayName = "${'$'}{property("mod.version")} for ${'$'}{property("mod.mc_title")}"
+                    displayName = "${'$'}{property("mod.version")} for ${'$'}{sc.current.version}"
                     version = "${'$'}{property("mod.version")}${if (config.useGithubBuildNumber) "-\$buildNum" else ""}+mc${'$'}{sc.current.version}"
-                    changelog = latestChange
+                    changelog = ${if (config.generateChangelog) "latestChange" else "\"No changelog available\""}
                     type = STABLE
                     modLoaders.add("fabric")
 
@@ -324,25 +326,43 @@ class GradleFileGenerator(project: Project, var config: GrindstoneConfig) {
     private fun buildPRMaps(): String {
         val b = StringBuilder()
 
-        config.modDependencies.forEach { dep -> b.append(",\n                            \"${dep.modId.replace('-', '_')}\" to project.property(\"deps.${dep.modId}\")") }
-        if (config.accessWidenerType == AWType.SPREAD) b.appendLine(",\n                            \"aw\" to project.property(\"mod.mc_title\")")
-        else if (config.accessWidenerType == AWType.SINGLE) b.append(",\n                            \"aw\" to \"${config.modId}\"")
+        config.modDependencies.filter { it.addToFabricModJson }.forEach { dep -> b.append(",\n                            \"${dep.resourceVersionKey}\" to project.property(\"deps.${dep.modId}\")") }
+        if (config.accessWidenerType.perVersion) b.appendLine(",\n                            \"aw\" to project.property(\"mod.mc_title\")")
+        else if (config.accessWidenerType.shared) b.append(",\n                            \"aw\" to \"${config.modId}\"")
 
         return b.toString()
     }
 
-    private fun buildRepositories(): String {
-        val b = StringBuilder()
+    private fun buildRepositories(): String =
+        (config.modDependencies + config.devDependencies)
+            .flatMap(DependencyEntry::repositories)
+            .filter { it != "https://repo.maven.apache.org/maven2" }
+            .distinct()
+            .joinToString("\n") { url ->
+                val insecure = if (url.startsWith("http://")) " { isAllowInsecureProtocol = true }" else ""
+                "    maven(${kotlinString(url)})$insecure"
+            }
 
-        config.modDependencies.forEach { dep -> b.appendLine("    strictMaven(\"${dep.mavenRepo}\", \"\")\n") }
-        config.devDependencies.forEach { dep -> b.appendLine("    strictMaven(\"${dep.mavenRepo}\", \"\")\n") }
-
-        return b.toString()
+    private fun generateDependencies(builder: FileBuilder, deps: List<DependencyEntry>, indent: String, dev: Boolean) {
+        val prefix = if (dev) "r." else ""
+        for (dependency in deps) {
+            val configuration = when {
+                dev && dependency.remap -> "modLocalRuntime"
+                dev -> "runtimeOnly"
+                dependency.remap -> "modImplementation"
+                else -> "implementation"
+            }
+            builder.append("$indent$configuration(${dependencyNotation(dependency, prefix)})")
+        }
     }
 
-    private fun generateDependencies(builder: FileBuilder, deps: List<DependencyEntry>, prefix: String, indent: String, dev: Boolean) {
-        for (dep in deps) builder.append("$indent    $prefix\"", false).append("${dep.mavenCoordinate}:\${property(\"${if (dev) "r." else ""}deps.${dep.modId}\")}\")")
+    private fun dependencyNotation(dependency: DependencyEntry, prefix: String): String {
+        val coordinate = kotlinString(dependency.mavenCoordinate).removeSurrounding("\"")
+        return "\"$coordinate:\${property(\"${prefix}deps.${dependency.modId}\")}\""
     }
+
+    private fun kotlinString(value: String): String =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$") + "\""
 
     private fun appendDependencyProps(builder: FileBuilder, deps: List<DependencyEntry>, prefix: String = ""): Boolean {
         for (dep in deps) builder.append("${prefix}deps.${dep.modId}=${dep.version()}")
