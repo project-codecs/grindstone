@@ -17,7 +17,6 @@ import com.codex.idea.grindstone.wizard.component.McVersionPickerPanel
 import com.intellij.ide.wizard.AbstractNewProjectWizardStep
 import com.intellij.ide.wizard.NewProjectWizardBaseData
 import com.intellij.ide.wizard.NewProjectWizardStep
-import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.ui.Messages
@@ -51,6 +50,7 @@ import javax.swing.JMenuItem
 import javax.swing.JPopupMenu
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.DefaultComboBoxModel
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.SwingUtilities
@@ -222,17 +222,26 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                 .apply { component.foreground = JBColor.RED }
         }.visibleIf(noVersionsProperty)
 
-        builder.collapsibleGroup(translate("property.mcVersions")) {
-            row(translate("property.mcVersions.versions", after = 1)) {
-                versionPicker = McVersionPickerPanel { selectedVersions = it; mappingsConfigProperty.set(mappingsConfigProperty.get()) }
-                cell(versionPicker).align(AlignX.FILL)
+        builder.row(translate("property.mcVersions.versions", after = 1)) {
+            val pickerButton = JButton("Choose versions...")
+
+            versionPicker = McVersionPickerPanel { versions ->
+                selectedVersions = versions
+                mappingsConfigProperty.set(mappingsConfigProperty.get())
+
+                pickerButton.text = if (versions.isEmpty()) {
+                    "Choose versions..."
+                } else {
+                    "${versions.size} selected"
+                }
             }
 
-            row(translate("property.mcVersions.vcsVersion", after = 1)) {
-                comboBox(controllerComboModel)
-                    .bindItem(vcsVersionProperty)
+            pickerButton.addActionListener {
+                versionPicker.spawnPopup(pickerButton)
             }
-        }.visibleIf(versionsLoadingProperty.not())
+
+            cell(pickerButton).align(AlignX.FILL)
+        }
 
         builder.collapsibleGroup(translate("property.project")) {
             row(translate("property.project.modName", after = 1)) {

@@ -37,16 +37,10 @@ intellijPlatform {
 
         changeNotes = """
             ## Fixed
-            - Changing the per-version table not updating validation in the Dependency Dialog
+            - Datagen entrypoint having a weird package thingy that IDEA broke
             
-            ## Added
-            - Config presets
-            - Automatic per-verison fetching for mod/dev deps
-            - Cloudsmith API support because cloudsmith does things weirdly
-            - Option to disable changelogs
-            - Option to disable comments in version tree properties files
-            - "Better" license generation
-            - Class tweaker support
+            ## Changed
+            - Redesigned version-picker to use a multi-select dropdown, suggested by the stonecutter dev herself
         """.trimIndent()
     }
 }

@@ -107,8 +107,8 @@ class SourceTreeGenerator(project: Project, var config: GrindstoneConfig) {
         
         public class $className implements DataGeneratorEntrypoint {
             @Override
-            public void onInitializeDataGenerator(FabricDataGenerator com.codex.idea.grindstone.generator) {
-                FabricDataGenerator.Pack pack = com.codex.idea.grindstone.generator.createPack();
+            public void onInitializeDataGenerator(FabricDataGenerator generator) {
+                FabricDataGenerator.Pack pack = generator.createPack();
             }
         }
     """.trimIndent() + "\n"

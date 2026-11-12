@@ -2,14 +2,17 @@ package com.codex.idea.grindstone.wizard.component
 
 import com.codex.idea.grindstone.utility.translate
 import com.codex.idea.grindstone.wizard.step.McGameVersion
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTextField
+import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Container
 import java.awt.Dimension
 import java.awt.FlowLayout
+import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -25,6 +28,8 @@ class McVersionPickerPanel(private val onSelectionChanged: (List<String>) -> Uni
     private val gridPanel = JPanel(WrapLayout(FlowLayout.LEFT, 6, 4))
 
     init {
+        border = JBUI.Borders.empty(8)
+
         val top = JPanel(BorderLayout(4, 0))
         top.add(searchField, BorderLayout.CENTER)
         top.add(showSnapshotsBox, BorderLayout.EAST)
@@ -56,26 +61,41 @@ class McVersionPickerPanel(private val onSelectionChanged: (List<String>) -> Uni
         onSelectionChanged(selected.toList())
     }
 
+    fun spawnPopup(anchor: JComponent) {
+        JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(this, searchField)
+            .setRequestFocus(true)
+            .createPopup()
+            .showUnderneathOf(anchor)
+    }
+
     private fun rebuildGrid() {
         val filter = searchField.text.trim()
         val showSnapshots = showSnapshotsBox.isSelected
 
-        val filtered = allVersions.filter { v ->
-            (showSnapshots || v.stable) &&
-                    (filter.isEmpty() || v.version.contains(filter, ignoreCase = true))
-        }
+        val visibleVersions = selected.toList() + allVersions.asSequence()
+            .filter { it.version !in selected }
+            .filter { showSnapshots || it.stable }
+            .filter { it.version.contains(filter, ignoreCase = true) }
+            .map { it.version }
+            .toList()
 
         checkboxes.clear()
         gridPanel.removeAll()
 
-        for (v in filtered) {
-            val cb = JBCheckBox(v.version, v.version in selected)
-            cb.addActionListener {
-                if (cb.isSelected) selected.add(v.version) else selected.remove(v.version)
+        for (version in visibleVersions) {
+            val checkbox = JBCheckBox(version, version in selected)
+            checkbox.addActionListener {
+                if (checkbox.isSelected) {
+                    selected.add(version)
+                } else {
+                    selected.remove(version)
+                }
+
+                rebuildGrid()
                 onSelectionChanged(selected.toList())
             }
-            checkboxes.add(cb)
-            gridPanel.add(cb)
+            gridPanel.add(checkbox)
         }
 
         gridPanel.revalidate()
