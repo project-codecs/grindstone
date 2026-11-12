@@ -303,7 +303,9 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
         builder.collapsibleGroup(translate("property.features")) {
             row(translate("property.features.license")) {
                 comboBox(ProjectLicense.entries.toList()).bindItem(licenseProperty).applyToComponent {
-                    renderer = SimpleListCellRenderer.create("") { it.id }
+                    renderer = SimpleListCellRenderer.create<ProjectLicense> { label, license, _ ->
+                        label.text = license?.id.orEmpty()
+                    }
                 }
             }
 
@@ -328,7 +330,9 @@ class GrindstoneStep(parent: NewProjectWizardStep) : AbstractNewProjectWizardSte
                 comboBox(AWType.entries.toList())
                     .bindItem(awTypeProperty)
                     .applyToComponent {
-                        renderer = SimpleListCellRenderer.create("") { it.label }
+                        renderer = SimpleListCellRenderer.create<AWType> { label, type, _ ->
+                            label.text = type?.label.orEmpty()
+                        }
                     }
             }
 
